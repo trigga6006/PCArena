@@ -10,7 +10,7 @@ const crypto = require('node:crypto');
 
 const PORT = parseInt(process.env.PORT, 10) || 8080;
 const MAX_BODY = 8192;          // 8KB max payload
-const ROOM_TTL = 15 * 60_000;  // 15 min room lifetime
+const ROOM_TTL = 30 * 60_000;  // 30 min room lifetime (refreshed on every turn)
 const ROOM_LIMIT = 100;         // max concurrent rooms
 const CLEANUP_INTERVAL = 30_000;
 const RATE_LIMIT = 120;         // requests per minute per IP (500ms polling = 120/min)
@@ -191,50 +191,64 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { status: 'matched', fighter: room.hostFighter, matchSeed: room.matchSeed });
     }
 
-    // POST /rooms/:code/turn — submit a move choice for the current turn
+    // POST /rooms/:code/turn — submit a move choice
+    // Moves are stored per-turn-number. Submitting for a new turn auto-advances.
     const turnPostMatch = method === 'POST' && path.match(/^\/rooms\/([A-Za-z0-9-]+)\/turn$/);
     if (turnPostMatch) {
       const normalized = normalizeCode(turnPostMatch[1]);
       const room = rooms.get(normalized);
       if (!room) return error(res, 404, 'Room not found or expired.');
 
+      // Keep room alive during active battle
+      room.createdAt = Date.now();
+
       const body = JSON.parse(await readBody(req));
       const { role, move, turnNum } = body;
       if (!role || !move) return error(res, 400, 'Missing role or move.');
+      if (role !== 'host' && role !== 'joiner') return error(res, 400, 'Invalid role.');
 
-      // Ensure we're on the right turn
-      if (turnNum !== undefined && turnNum !== room.turnNum) {
-        return error(res, 409, 'Turn mismatch. Resync needed.');
+      // Initialize turns storage if needed
+      if (!room.turns) room.turns = {};
+
+      // Store move for the requested turn
+      const tn = turnNum !== undefined ? turnNum : room.turnNum;
+      if (!room.turns[tn]) room.turns[tn] = { hostMove: null, joinerMove: null };
+
+      if (role === 'host') room.turns[tn].hostMove = move;
+      else room.turns[tn].joinerMove = move;
+
+      // Track latest turn number
+      if (tn > room.turnNum) room.turnNum = tn;
+
+      // If both moves are in for this turn, return both
+      const turn = room.turns[tn];
+      if (turn.hostMove && turn.joinerMove) {
+        return json(res, 200, { status: 'ready', hostMove: turn.hostMove, joinerMove: turn.joinerMove, turnNum: tn });
       }
-
-      if (role === 'host') room.hostMove = move;
-      else if (role === 'joiner') room.joinerMove = move;
-      else return error(res, 400, 'Invalid role.');
-
-      // If both moves are in, return both
-      if (room.hostMove && room.joinerMove) {
-        const result = { status: 'ready', hostMove: room.hostMove, joinerMove: room.joinerMove, turnNum: room.turnNum };
-        return json(res, 200, result);
-      }
-      return json(res, 200, { status: 'waiting' });
+      return json(res, 200, { status: 'waiting', turnNum: tn });
     }
 
-    // GET /rooms/:code/turn — poll for turn resolution
+    // GET /rooms/:code/turn?t=N — poll for turn resolution (READ-ONLY, never clears)
     const turnGetMatch = method === 'GET' && path.match(/^\/rooms\/([A-Za-z0-9-]+)\/turn$/);
     if (turnGetMatch) {
       const normalized = normalizeCode(turnGetMatch[1]);
       const room = rooms.get(normalized);
       if (!room) return error(res, 404, 'Room not found or expired.');
 
-      if (room.hostMove && room.joinerMove) {
-        const result = { status: 'ready', hostMove: room.hostMove, joinerMove: room.joinerMove, turnNum: room.turnNum };
-        // Advance to next turn
-        room.turnNum++;
-        room.hostMove = null;
-        room.joinerMove = null;
-        return json(res, 200, result);
+      // Keep room alive during active battle
+      room.createdAt = Date.now();
+
+      // Check which turn is being asked about
+      const askTurn = url.searchParams.get('t');
+      const tn = askTurn !== null ? parseInt(askTurn, 10) : room.turnNum;
+
+      if (!room.turns) room.turns = {};
+      const turn = room.turns[tn];
+
+      if (turn && turn.hostMove && turn.joinerMove) {
+        return json(res, 200, { status: 'ready', hostMove: turn.hostMove, joinerMove: turn.joinerMove, turnNum: tn });
       }
-      return json(res, 200, { status: 'waiting', turnNum: room.turnNum });
+      return json(res, 200, { status: 'waiting', turnNum: tn });
     }
 
     // POST /rooms/:code/end — signal battle is over, clean up room

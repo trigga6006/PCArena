@@ -53,11 +53,11 @@ async function submitAndWait(relayUrl, roomCode, role, moveName, turnNum) {
     return { hostMove: submitResult.hostMove, joinerMove: submitResult.joinerMove };
   }
 
-  // Poll until opponent submits
+  // Poll until opponent submits — pass turn number so we get the right turn's data
   const start = Date.now();
   while (Date.now() - start < TURN_TIMEOUT) {
     await sleep(POLL_INTERVAL);
-    const result = await httpRequest(`${base}/rooms/${code}/turn`, 'GET');
+    const result = await httpRequest(`${base}/rooms/${code}/turn?t=${turnNum}`, 'GET');
     if (result.status === 'ready') {
       return { hostMove: result.hostMove, joinerMove: result.joinerMove };
     }

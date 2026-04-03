@@ -1,38 +1,112 @@
 // Profile PC hardware and map to fighter stats
 const si = require('systeminformation');
+const nodeos = require('node:os');
+const { execSync } = require('node:child_process');
+
+// Fallback: query GPU via PowerShell/WMIC on Windows
+function fallbackGPU() {
+  try {
+    if (process.platform !== 'win32') return null;
+    const raw = execSync(
+      'powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | ConvertTo-Json"',
+      { timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] }
+    ).toString().trim();
+    let gpus = JSON.parse(raw);
+    if (!Array.isArray(gpus)) gpus = [gpus];
+    // Filter to the one with most VRAM
+    gpus.sort((a, b) => (b.AdapterRAM || 0) - (a.AdapterRAM || 0));
+    const best = gpus[0];
+    if (best && best.Name) {
+      return {
+        model: best.Name,
+        vramMB: Math.round((best.AdapterRAM || 0) / (1024 * 1024)),
+        vendor: best.Name.toLowerCase().includes('nvidia') ? 'NVIDIA' :
+                best.Name.toLowerCase().includes('amd') ? 'AMD' :
+                best.Name.toLowerCase().includes('intel') ? 'Intel' : '',
+      };
+    }
+  } catch {}
+  return null;
+}
+
+// Fallback: get CPU info from Node's os.cpus()
+function fallbackCPU() {
+  const cpus = nodeos.cpus();
+  if (!cpus.length) return null;
+  return {
+    brand: cpus[0].model || 'Unknown CPU',
+    manufacturer: cpus[0].model.includes('Intel') ? 'Intel' :
+                   cpus[0].model.includes('AMD') ? 'AMD' : '',
+    cores: cpus.length,        // logical cores
+    threads: cpus.length,
+    speed: cpus[0].speed / 1000, // MHz → GHz
+    speedMax: cpus[0].speed / 1000,
+  };
+}
 
 async function getSpecs() {
   const [cpu, mem, graphics, disks, os, uuid, chassis] = await Promise.all([
-    si.cpu(),
-    si.mem(),
-    si.graphics(),
-    si.diskLayout(),
-    si.osInfo(),
-    si.uuid(),
+    si.cpu().catch(() => ({})),
+    si.mem().catch(() => ({ total: 8 * 1024 ** 3 })),
+    si.graphics().catch(() => ({ controllers: [] })),
+    si.diskLayout().catch(() => []),
+    si.osInfo().catch(() => ({})),
+    si.uuid().catch(() => ({})),
     si.chassis().catch(() => ({ type: '' })),
   ]);
 
-  // Pick the strongest GPU — many systems have both integrated (Intel UHD) and discrete (RTX 4080).
-  // Sort by VRAM descending so the discrete card wins.
+  // ── CPU: use systeminformation, fallback to os.cpus() ──
+  let cpuInfo = {
+    brand: cpu.brand || '',
+    manufacturer: cpu.manufacturer || '',
+    cores: cpu.physicalCores || cpu.cores || 0,
+    threads: cpu.cores || 0,
+    speed: cpu.speed || 0,
+    speedMax: cpu.speedMax || cpu.speed || 0,
+  };
+  if (!cpuInfo.brand || cpuInfo.brand === 'Unknown' || cpuInfo.cores === 0) {
+    const fb = fallbackCPU();
+    if (fb) {
+      cpuInfo = {
+        brand: cpuInfo.brand && cpuInfo.brand !== 'Unknown' ? cpuInfo.brand : fb.brand,
+        manufacturer: cpuInfo.manufacturer || fb.manufacturer,
+        cores: cpuInfo.cores || fb.cores,
+        threads: cpuInfo.threads || fb.threads,
+        speed: cpuInfo.speed || fb.speed,
+        speedMax: cpuInfo.speedMax || fb.speedMax,
+      };
+    }
+  }
+  if (!cpuInfo.brand) cpuInfo.brand = 'Unknown CPU';
+  if (!cpuInfo.cores) cpuInfo.cores = 1;
+  if (!cpuInfo.threads) cpuInfo.threads = cpuInfo.cores;
+  if (!cpuInfo.speed) cpuInfo.speed = 1.0;
+  if (!cpuInfo.speedMax) cpuInfo.speedMax = cpuInfo.speed;
+
+  // ── GPU: use systeminformation, fallback to PowerShell query ──
   const gpuControllers = (graphics.controllers || []).slice().sort((a, b) => (b.vram || 0) - (a.vram || 0));
-  const gpuMain = gpuControllers[0] || {};
+  let gpuMain = gpuControllers[0] || {};
+
+  // Check if systeminformation returned junk (no model, or "Integrated" with 0 VRAM)
+  const gpuLooksWrong = !gpuMain.model || gpuMain.model === 'Integrated' ||
+    (gpuMain.model.toLowerCase().includes('intel') && gpuControllers.length <= 1 && !gpuMain.model.toLowerCase().includes('arc'));
+
+  if (gpuLooksWrong) {
+    const fb = fallbackGPU();
+    if (fb && fb.vramMB > (gpuMain.vram || 0)) {
+      gpuMain = { model: fb.model, vram: fb.vramMB, vendor: fb.vendor };
+    }
+  }
+
   const primaryDisk = disks?.[0] || {};
   const chassisType = (chassis.type || '').toLowerCase();
 
   return {
     id: uuid.hardware || uuid.os || `${Date.now()}`,
-    cpu: {
-      brand: cpu.brand || 'Unknown CPU',
-      manufacturer: cpu.manufacturer || '',
-      cores: cpu.physicalCores || cpu.cores || 1,
-      threads: cpu.cores || 1,
-      speed: cpu.speed || 1.0,
-      speedMax: cpu.speedMax || cpu.speed || 1.0,
-    },
+    cpu: cpuInfo,
     ram: {
       totalGB: Math.round((mem.total / (1024 ** 3)) * 10) / 10,
-      // Try to get speed, fallback to 2400
-      speed: 3200, // systeminformation doesn't reliably get RAM speed on all platforms
+      speed: 3200,
     },
     gpu: {
       model: gpuMain.model || 'Integrated',

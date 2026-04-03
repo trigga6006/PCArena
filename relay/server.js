@@ -212,10 +212,15 @@ const server = http.createServer(async (req, res) => {
 
       // Store move for the requested turn
       const tn = turnNum !== undefined ? turnNum : room.turnNum;
-      if (!room.turns[tn]) room.turns[tn] = { hostMove: null, joinerMove: null };
+      if (!room.turns[tn]) room.turns[tn] = { hostMove: null, joinerMove: null, hostItem: null, joinerItem: null };
 
-      if (role === 'host') room.turns[tn].hostMove = move;
-      else room.turns[tn].joinerMove = move;
+      if (role === 'host') {
+        room.turns[tn].hostMove = move;
+        room.turns[tn].hostItem = body.item || null;
+      } else {
+        room.turns[tn].joinerMove = move;
+        room.turns[tn].joinerItem = body.item || null;
+      }
 
       // Track latest turn number
       if (tn > room.turnNum) room.turnNum = tn;
@@ -223,7 +228,7 @@ const server = http.createServer(async (req, res) => {
       // If both moves are in for this turn, return both
       const turn = room.turns[tn];
       if (turn.hostMove && turn.joinerMove) {
-        return json(res, 200, { status: 'ready', hostMove: turn.hostMove, joinerMove: turn.joinerMove, turnNum: tn });
+        return json(res, 200, { status: 'ready', hostMove: turn.hostMove, joinerMove: turn.joinerMove, hostItem: turn.hostItem, joinerItem: turn.joinerItem, turnNum: tn });
       }
       return json(res, 200, { status: 'waiting', turnNum: tn });
     }
@@ -246,7 +251,7 @@ const server = http.createServer(async (req, res) => {
       const turn = room.turns[tn];
 
       if (turn && turn.hostMove && turn.joinerMove) {
-        return json(res, 200, { status: 'ready', hostMove: turn.hostMove, joinerMove: turn.joinerMove, turnNum: tn });
+        return json(res, 200, { status: 'ready', hostMove: turn.hostMove, joinerMove: turn.joinerMove, hostItem: turn.hostItem, joinerItem: turn.joinerItem, turnNum: tn });
       }
       return json(res, 200, { status: 'waiting', turnNum: tn });
     }

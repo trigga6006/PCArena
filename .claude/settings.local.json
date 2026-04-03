@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find C:/Users/fowle/Documents/dev/WorkstationOff -maxdepth 3 -name *.md -o -name *.txt -o -name *.test.js -o -name *.spec.js)",
+      "Bash(node -e \"const { getSprite, identifyHardware } = require\\(''./src/sprites''\\); const hw = identifyHardware\\({ gpu: { model: ''RTX 4090 ASUS ROG STRIX'', vramMB: 24000, vendor: ''NVIDIA'' }, cpu: { brand: ''AMD Ryzen 9 7950X'', cores: 16 }, storage: { type: ''NVMe'' }, ram: { totalGB: 64 }, isLaptop: false }\\); console.log\\(JSON.stringify\\(hw, null, 2\\)\\); const s = getSprite\\({ gpu: { model: ''RTX 4090 ASUS ROG STRIX'', vramMB: 24000, vendor: ''NVIDIA'' }, cpu: { brand: ''AMD Ryzen 9 7950X'', cores: 16 }, storage: { type: ''NVMe'' }, ram: { totalGB: 64 }, isLaptop: false }\\); console.log\\(''hw:'', JSON.stringify\\(s.hw\\)\\); console.log\\(''has back.draw:'', typeof s.back.draw\\); console.log\\(''has front.draw:'', typeof s.front.draw\\); console.log\\(''has drawBackHit:'', typeof s.drawBackHit\\); console.log\\(''has drawBackKO:'', typeof s.drawBackKO\\);\")",
+      "Bash(node -e \"const { identifyHardware } = require\\(''./src/sprites''\\); console.log\\(''Mid Intel/AMD:'', JSON.stringify\\(identifyHardware\\({ gpu: { model: ''Radeon RX 7600'', vramMB: 8000, vendor: ''AMD'' }, cpu: { brand: ''Intel Core i5-13400'', cores: 6 }, storage: { type: ''SSD'' }, ram: { totalGB: 16 } }\\)\\)\\); console.log\\(''Low/Celeron:'', JSON.stringify\\(identifyHardware\\({ gpu: { model: ''Intel UHD Graphics 630'', vramMB: 128, vendor: ''Intel'' }, cpu: { brand: ''Intel Celeron N4500'', cores: 2 }, storage: { type: ''HDD'' }, ram: { totalGB: 4 } }\\)\\)\\); console.log\\(''Apple:'', JSON.stringify\\(identifyHardware\\({ gpu: { model: ''Apple M3 Max'', vramMB: 0, vendor: ''Apple'' }, cpu: { brand: ''Apple M3 Max'', cores: 14 }, storage: { type: ''NVMe'' }, ram: { totalGB: 36 } }\\)\\)\\);\")",
+      "Bash(node \"C:/Users/fowle/Documents/dev/omniox/bin/omniox.js\" notify \"Sprite overhaul complete — 7 layers\" --title \"Claude\")",
+      "Bash(node -c src/turnrenderer.js)",
+      "Bash(node -c src/screen.js)",
+      "Bash(node \"C:/Users/fowle/Documents/dev/omniox/bin/omniox.js\" notify \"Nicknames, intro, double-bar fix done\" --title \"Claude\")",
+      "Bash(node -c src/moveselect.js)",
+      "Bash(node \"C:/Users/fowle/Documents/dev/omniox/bin/omniox.js\" notify \"Matrix rain now animates during turns\" --title \"Claude\")",
+      "Bash(node -c src/effects/matrix.js)",
+      "Bash(node -c src/palette.js)",
+      "Bash(node \"C:/Users/fowle/Documents/dev/omniox/bin/omniox.js\" notify \"Fixed double updates + brighter rain\" --title \"Claude\")"
+    ]
+  }
+}

@@ -10,6 +10,7 @@ class MatrixRain {
     this.height = height;
     this.rng = rng;
     this.columns = [];
+    this.exclusionZone = null; // { x, y, w, h } — skip drawing in this rect
 
     for (let x = 0; x < width; x++) {
       this.columns.push({
@@ -17,7 +18,7 @@ class MatrixRain {
         speed: rng.float(0.3, 1.2),      // cells per frame
         length: rng.int(4, 14),           // trail length
         accumulator: 0,                   // sub-frame accumulation
-        active: rng.chance(0.35),         // not every column is active
+        active: rng.chance(0.55),         // slightly over half the columns active
         chars: [],                        // pre-generated characters
       });
 
@@ -41,7 +42,7 @@ class MatrixRain {
         col.y = this.rng.int(-8, -1);
         col.speed = this.rng.float(0.3, 1.2);
         col.length = this.rng.int(4, 14);
-        col.active = this.rng.chance(0.35);
+        col.active = this.rng.chance(0.55);
       }
     }
   }
@@ -67,6 +68,10 @@ class MatrixRain {
         } else {
           fg = colors.ghost;           // tail fades out
         }
+
+        // Skip exclusion zone (log/UI area during move selection)
+        const ez = this.exclusionZone;
+        if (ez && x >= ez.x && x < ez.x + ez.w && y >= ez.y && y < ez.y + ez.h) continue;
 
         // Only draw in "empty" cells — don't overwrite UI elements
         const cell = screen.buffer[y]?.[x];

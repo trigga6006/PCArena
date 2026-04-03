@@ -52,8 +52,8 @@ const colors = {
   damage:      rgb(245, 180, 150),        // damage numbers — peach
   crit:        rgb(240, 220, 140),        // critical hit — gold
   miss:        rgb(100, 100, 130),        // miss — dim
-  matrix:      rgb(60, 100, 80),          // matrix rain — dark muted green
-  matrixBright:rgb(100, 180, 130),        // matrix rain highlight
+  matrix:      rgb(40, 130, 75),           // matrix rain — visible green
+  matrixBright:rgb(85, 215, 125),         // matrix rain leading char — bright
   glitch:      rgb(200, 170, 240),        // glitch effect — lilac
 };
 

@@ -37,20 +37,21 @@ function httpRequest(url, method, body = null) {
 }
 
 // Submit our move and wait for opponent's move
-async function submitAndWait(relayUrl, roomCode, role, moveName, turnNum) {
+async function submitAndWait(relayUrl, roomCode, role, moveName, turnNum, itemId) {
   const base = relayUrl.replace(/\/$/, '');
   const code = roomCode.toUpperCase().replace(/[\s]/g, '');
 
-  // Submit our move
+  // Submit our move (+ item if used this turn)
   const submitResult = await httpRequest(`${base}/rooms/${code}/turn`, 'POST', {
     role,
     move: moveName,
     turnNum,
+    item: itemId || null,
   });
 
   // If both moves already in, return immediately
   if (submitResult.status === 'ready') {
-    return { hostMove: submitResult.hostMove, joinerMove: submitResult.joinerMove };
+    return { hostMove: submitResult.hostMove, joinerMove: submitResult.joinerMove, hostItem: submitResult.hostItem, joinerItem: submitResult.joinerItem };
   }
 
   // Poll until opponent submits — pass turn number so we get the right turn's data
@@ -60,7 +61,7 @@ async function submitAndWait(relayUrl, roomCode, role, moveName, turnNum) {
     try {
       const result = await httpRequest(`${base}/rooms/${code}/turn?t=${turnNum}`, 'GET');
       if (result.status === 'ready') {
-        return { hostMove: result.hostMove, joinerMove: result.joinerMove };
+        return { hostMove: result.hostMove, joinerMove: result.joinerMove, hostItem: result.hostItem, joinerItem: result.joinerItem };
       }
     } catch (err) {
       // Rate limited or transient error — back off and retry

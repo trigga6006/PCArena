@@ -15,15 +15,64 @@ const { selectMove } = require('./moveselect');
 const { createBattleState, processTurn, isOver, getWinner } = require('./turnbattle');
 const { submitAndWait, endBattle } = require('./turnrelay');
 const { useItem, ITEMS } = require('./items');
+// ITEMS is an object keyed by item ID — used to look up opponent's item from relay
 const { preBattleLobby } = require('./prebattle');
 
 const FPS = 20;
 const FRAME_MS = 1000 / FPS;
 const TURN_ANIM_MS = 4000;  // 4 seconds to animate each turn's events
 
+// ─── Hacker callsign pool ───
+// Deterministic nickname from specHash + tier for each fighter
+const CALLSIGNS = {
+  flagship: [
+    'MAINFRAME', 'ZERO_DAY', 'ROOT_ACCESS', 'KERNEL_PANIC',
+    'BLACKHAT', 'APEX_NODE', 'DARK_FIBER', 'OVERCLOCK',
+    'TITAN_GATE', 'SYSTEM_SHOCK', 'DEEP_STACK', 'PRIME_ROOT',
+  ],
+  high: [
+    'DARKNET', 'CIPHER_BREAK', 'PROXY_WAR', 'GHOST_SHELL',
+    'NETRUNNER', 'SILICON_EDGE', 'DAEMON_CORE', 'FLUX_GATE',
+    'RED_THREAD', 'CORE_DUMP', 'VECTOR_9', 'PHASE_SHIFT',
+  ],
+  mid: [
+    'PACKET_STORM', 'HASH_CLASH', 'FIREWALL', 'STACK_TRACE',
+    'MEM_LEAK', 'BYTE_FORCE', 'PING_SPIKE', 'CACHE_HIT',
+    'BIT_SHIFT', 'RUNTIME', 'HEX_EDIT', 'SUDO',
+  ],
+  low: [
+    'SCRIPT_KIDDIE', 'DIAL_UP', 'BLUESCREEN', 'SEG_FAULT',
+    'NULL_PTR', 'BOOT_LOOP', 'BEEP_CODE', 'FLOPPY',
+    'DOT_EXE', 'SAFE_MODE', 'BIOS_BEEP', 'TASK_FAIL',
+  ],
+};
+
+function getCallsign(fighter) {
+  const hw = fighter.sprite?.hw;
+  if (!hw) return fighter.name;
+  const tier = hw.tier || 'mid';
+  const pool = CALLSIGNS[tier] || CALLSIGNS.mid;
+  const idx = (hw.specHash || 0) % pool.length;
+  return pool[idx];
+}
+
 async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options = {}) {
   const { role, roomCode, relayUrl, seed } = options;
   const isOnline = !!roomCode;
+  const isHost = role === 'host' || !isOnline;
+
+  // Role-to-display mapping:
+  // state.a = ALWAYS host's fighter, state.b = ALWAYS joiner's fighter
+  // display: fighterA = me (bottom), fighterB = opponent (top)
+  // Host: state.a = me → meSlot='a'. Joiner: state.b = me → meSlot='b'
+  const meSlot = isHost ? 'a' : 'b';
+  const oppSlot = isHost ? 'b' : 'a';
+
+  // Map a state slot ('a'/'b') to display slot ('a' = me/bottom, 'b' = opponent/top)
+  function toDisplay(stateSlot) {
+    if (isHost) return stateSlot;
+    return stateSlot === 'a' ? 'b' : 'a';
+  }
 
   // Ensure sprites
   for (const f of [fighterA, fighterB]) {
@@ -51,17 +100,23 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
   const plyY = h - 22;
   const plyCenterX = plyX + 7;
   const plyCenterY = plyY + 5;
-  const oppBarW = Math.min(24, Math.floor(w * 0.2));
-  const plyBarX = Math.floor(w * 0.5);
+  // HP bars — halfway between sprite and center so they don't overlap characters
+  const barW = Math.min(24, Math.floor(w * 0.2));
+  const oppBarX = Math.floor(w * 0.33);   // between far-left (old) and sprite edge
+  const plyBarX = Math.floor(w * 0.28);   // between sprite edge and far-right (old)
   const plyBarY = plyY + 8;
-  const plyBarW = Math.min(28, Math.floor(w * 0.25));
   const logY = h - 7;
   const logHeight = 5;
   const logX = 3;
   const logW = w - 6;
 
-  // Battle state
-  const battleState = createBattleState(fighterA, fighterB, seed || 42);
+  // Battle state: state.a = host's fighter, state.b = joiner's fighter (ALWAYS)
+  // This ensures both players run identical processTurn() calls
+  const battleState = createBattleState(
+    isHost ? fighterA : fighterB,   // host's fighter → state.a
+    isHost ? fighterB : fighterA,   // joiner's fighter → state.b
+    seed || 42
+  );
   let hpA = fighterA.stats.maxHp;
   let hpB = fighterB.stats.maxHp;
   let targetHpA = hpA;
@@ -72,6 +127,7 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
   let p1KO = false;
   let p2KO = false;
   let frameCount = 0;
+  let battleStartTime = Date.now();
   let turnNum = 0;
 
   function addLog(text, color) {
@@ -80,18 +136,27 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
   }
 
   // ─── Item effect application ───
+  // `who` is the STATE slot ('a' or 'b') — maps to display via toDisplay()
   function applyItemEffect(item, state, who) {
     const fighter = state[who];
     const opponent = state[who === 'a' ? 'b' : 'a'];
+    const dWho = toDisplay(who);        // display slot for item user
+    const dOpp = toDisplay(who === 'a' ? 'b' : 'a'); // display slot for opponent
+
+    // Display positions: 'a' display = me (bottom), 'b' display = opponent (top)
+    const userCX = dWho === 'a' ? plyCenterX : oppCenterX;
+    const userCY = dWho === 'a' ? plyCenterY : oppCenterY;
+    const oppCX = dOpp === 'a' ? plyCenterX : oppCenterX;
+    const oppCY = dOpp === 'a' ? plyCenterY : oppCenterY;
 
     switch (item.effect) {
       case 'heal': {
         const healAmt = Math.round(fighter.maxHp * item.value);
         fighter.hp = Math.min(fighter.maxHp, fighter.hp + healAmt);
-        if (who === 'a') targetHpA = fighter.hp;
+        if (dWho === 'a') targetHpA = fighter.hp;
         else targetHpB = fighter.hp;
         addLog(`  +${healAmt} HP restored`, colors.mint);
-        floats.add(plyCenterX, plyCenterY - 3, `+${healAmt}`, colors.mint, 14);
+        floats.add(userCX, userCY - 3, `+${healAmt}`, colors.mint, 14);
         break;
       }
       case 'boost_str': {
@@ -145,13 +210,11 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       case 'direct_damage': {
         const dmg = Math.round(opponent.maxHp * item.value);
         opponent.hp = Math.max(0, opponent.hp - dmg);
-        if (who === 'a') targetHpB = opponent.hp;
-        else targetHpA = opponent.hp;
+        if (dOpp === 'a') targetHpA = opponent.hp;
+        else targetHpB = opponent.hp;
         addLog(`  Dealt ${dmg} direct damage`, colors.peach);
-        const ox = who === 'a' ? oppCenterX : plyCenterX;
-        const oy = who === 'a' ? oppCenterY : plyCenterY;
-        floats.add(ox, oy - 3, `${dmg}`, colors.damage, 14);
-        glitch.burst(ox, oy, 5, 5);
+        floats.add(oppCX, oppCY - 3, `${dmg}`, colors.damage, 14);
+        glitch.burst(oppCX, oppCY, 5, 5);
         break;
       }
       case 'stun': {
@@ -163,8 +226,8 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         const dmg = Math.round(opponent.maxHp * item.value);
         opponent.hp = Math.max(0, opponent.hp - dmg);
         opponent.stunned = true;
-        if (who === 'a') targetHpB = opponent.hp;
-        else targetHpA = opponent.hp;
+        if (dOpp === 'a') targetHpA = opponent.hp;
+        else targetHpB = opponent.hp;
         addLog(`  NUKE! ${dmg} damage + stun`, colors.gold);
         glitch.screenTear(w, 6);
         glitch.scatter(w / 2, h / 2, w, h, 20, 8);
@@ -190,16 +253,27 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     // Tick shield/reflect (they last 1 hit, handled in battle engine)
   }
 
+  // Fighter callsigns
+  const nameA = getCallsign(fighterA);
+  const nameB = getCallsign(fighterB);
+
   screen.enter();
 
   // ─── Pre-battle lobby: pick loadout + review bag ───
   try {
     const finalMoves = await preBattleLobby(fighterA, fighterB, screen);
-    // Update movesetA with player's final loadout choice
     movesetA = finalMoves;
   } catch (e) {
     // If pre-battle fails (e.g. non-interactive), keep default moveset
   }
+
+  // ─── Battle intro sequence ───
+  screen.resetDiff(); // flush pre-battle ghost content
+  await battleIntro(screen, matrix, nameA, nameB, fighterA, fighterB, w, h);
+
+  // Reset diff again so first battle frame is pristine
+  screen.resetDiff();
+  battleStartTime = Date.now();
 
   // ─── Main battle loop ───
   try {
@@ -207,25 +281,35 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       turnNum++;
       addLog(`═══ Turn ${turnNum} ═══`, colors.gold);
 
-      // Render the scene with move selection UI
-      drawScene();
-
       // ── Player selects move or item ──
-      const choice = await selectMove(movesetA, screen, logX, logY, logW, logHeight);
+      // Clear stale effects so they don't overlay the move UI
+      glitch.active = [];
+      floats.items = [];
+
+      // Set exclusion zones so rain/effects skip the log/UI area
+      const uiZone = { x: logX, y: logY - 1, w: logW, h: logHeight + 2 };
+      matrix.exclusionZone = uiZone;
+      glitch.exclusionZone = uiZone;
+      floats.exclusionZone = uiZone;
+
+      // Pass drawSceneBase as onTick so matrix rain + effects animate during selection
+      const choice = await selectMove(movesetA, screen, logX, logY, logW, logHeight, drawSceneBase);
+
+      // Clear exclusion zones after selection
+      matrix.exclusionZone = null;
+      glitch.exclusionZone = null;
+      floats.exclusionZone = null;
 
       let myMove = null;
-      let usedItemThisTurn = false;
+      let myItem = null;
 
       if (choice.type === 'item') {
-        // ── ITEM USAGE — apply immediately, then still attack ──
+        // ── ITEM USAGE — consume from inventory, defer application until synced ──
         const item = choice.item;
         const consumed = useItem(item.id);
         if (consumed) {
+          myItem = item;
           addLog(`Used: ${item.name}`, colors.mint);
-          applyItemEffect(item, battleState, 'a');
-          usedItemThisTurn = true;
-          await animateIdle(800);
-          drawScene();
         }
         // After item, auto-pick first move (items don't replace your attack)
         myMove = movesetA[0];
@@ -236,36 +320,70 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       }
 
       let opponentMove;
+      let oppItem = null;
       if (isOnline) {
-        drawScene();
         addLog('Waiting for opponent...', colors.dim);
-        drawScene();
 
-        // Send move name (items are local-only, opponent just sees our attack)
-        const result = await submitAndWait(relayUrl, roomCode, role, myMove.name, turnNum - 1);
+        // Animate while waiting for opponent's move
+        let waitDone = false;
+        const waitTimer = setInterval(() => {
+          if (waitDone) return;
+          drawSceneBase();
+          // Show waiting message in log area
+          screen.text(logX, logY, '› Waiting for opponent...', colors.dim);
+          const dots = '.'.repeat(Math.floor(Date.now() / 400) % 4);
+          screen.text(logX, logY + 1, `  ${dots}`, colors.dimmer);
+          screen.render();
+        }, FRAME_MS);
+
+        // Send move + item through relay; wait for opponent's move + item
+        const result = await submitAndWait(relayUrl, roomCode, role, myMove.name, turnNum - 1, myItem?.id);
+        waitDone = true;
+        clearInterval(waitTimer);
         const oppMoveName = role === 'host' ? result.joinerMove : result.hostMove;
         opponentMove = movesetB.find(m => m.name === oppMoveName) || movesetB[0];
+
+        // Get opponent's item (if any)
+        const oppItemId = role === 'host' ? result.joinerItem : result.hostItem;
+        if (oppItemId) oppItem = ITEMS[oppItemId] || null;
       } else {
         opponentMove = movesetB[battleState.rng.int(0, movesetB.length - 1)];
       }
 
       addLog(`Opponent chose: ${opponentMove.label}`, colors.p2);
 
+      // ── Apply items in deterministic order: host first, then joiner ──
+      // Both clients apply the SAME items to the SAME state slots
+      const hostItem = isHost ? myItem : oppItem;
+      const joinerItem = isHost ? oppItem : myItem;
+
+      if (hostItem) {
+        applyItemEffect(hostItem, battleState, 'a');   // host is always state.a
+        await animateIdle(400);
+        drawScene();
+      }
+      if (joinerItem) {
+        applyItemEffect(joinerItem, battleState, 'b'); // joiner is always state.b
+        await animateIdle(400);
+        drawScene();
+      }
+
       // ── Process turn ──
-      const events = processTurn(
-        battleState,
-        role === 'joiner' ? opponentMove : myMove,
-        role === 'joiner' ? myMove : opponentMove
-      );
+      // moveA = host's move (for state.a), moveB = joiner's move (for state.b)
+      const hostMove = isHost ? myMove : opponentMove;
+      const joinerMove = isHost ? opponentMove : myMove;
+      const events = processTurn(battleState, hostMove, joinerMove);
 
       // ── Animate the turn events ──
       await animateTurnEvents(events);
 
       // Update HP targets from final event state
+      // event.hpA = state.a HP (host), event.hpB = state.b HP (joiner)
+      // targetHpA = display "me" HP, targetHpB = display "opponent" HP
       const lastHpEvent = [...events].reverse().find(e => e.hpA !== undefined);
       if (lastHpEvent) {
-        targetHpA = lastHpEvent.hpA;
-        targetHpB = lastHpEvent.hpB;
+        targetHpA = isHost ? lastHpEvent.hpA : lastHpEvent.hpB;   // my HP
+        targetHpB = isHost ? lastHpEvent.hpB : lastHpEvent.hpA;   // opponent HP
       }
 
       // Tick down temporary boosts
@@ -276,8 +394,11 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     }
 
     // ── Victory ──
-    const winner = getWinner(battleState);
-    const winnerName = winner === 'a' ? fighterA.name : fighterB.name;
+    const stateWinner = getWinner(battleState);
+    // Convert state winner to display/caller perspective
+    // state.a = host, state.b = joiner; caller expects 'a' = fighterA (me), 'b' = fighterB (opponent)
+    const displayWinner = toDisplay(stateWinner);
+    const winnerName = displayWinner === 'a' ? nameA : displayWinner === 'b' ? nameB : 'DRAW';
     addLog('', null);
     addLog(`═══ ${winnerName} WINS! ═══`, colors.gold);
     glitch.screenTear(w, 8);
@@ -289,7 +410,7 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     if (isOnline) endBattle(relayUrl, roomCode);
 
     screen.exit();
-    return winner;
+    return displayWinner;
 
   } catch (err) {
     screen.exit();
@@ -298,9 +419,28 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
   // ─── Drawing helpers ───
 
-  function drawScene() {
+  // Draw the full scene WITHOUT the log area and without calling render().
+  // Used as the onTick callback during move selection so rain/effects animate.
+  function drawSceneBase() {
     screen.clear();
+    frameCount = Math.floor((Date.now() - battleStartTime) / FRAME_MS);
+    matrix.update();
     matrix.draw(screen);
+    glitch.update();
+    floats.update();
+    projectiles.update();
+    if (p1HitFrames > 0) p1HitFrames--;
+    if (p2HitFrames > 0) p2HitFrames--;
+
+    // Smooth HP
+    targetHpA = Math.max(0, Math.min(targetHpA, fighterA.stats.maxHp));
+    targetHpB = Math.max(0, Math.min(targetHpB, fighterB.stats.maxHp));
+    hpA += (targetHpA - hpA) * 0.18;
+    hpB += (targetHpB - hpB) * 0.18;
+    if (Math.abs(hpA - targetHpA) < 2) hpA = targetHpA;
+    if (Math.abs(hpB - targetHpB) < 2) hpB = targetHpB;
+    hpA = Math.max(0, Math.min(hpA, fighterA.stats.maxHp));
+    hpB = Math.max(0, Math.min(hpB, fighterB.stats.maxHp));
 
     // Title
     screen.centerText(0, '─'.repeat(w), colors.dimmer);
@@ -322,26 +462,35 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     else if (p2HitFrames > 0) sprB?.drawFrontHit(screen, oppX, oppY, frameCount);
     else sprB?.front.draw(screen, oppX, oppY, null, frameCount);
 
-    // Opponent info (top-left)
-    screen.text(3, 2, fighterB.name.slice(0, 24), colors.p2, null, true);
-    const ratioB = Math.max(0, hpB / fighterB.stats.maxHp);
-    screen.bar(3, 3, oppBarW, ratioB, hpColor(ratioB), colors.dimmer);
-    screen.text(3 + oppBarW, 3, ` ${Math.round(Math.max(0, hpB))}/${fighterB.stats.maxHp}`, hpColor(ratioB));
-
-    // Player info (bottom-right)
-    screen.text(plyBarX, plyBarY, fighterA.name.slice(0, 24), colors.p1, null, true);
-    const ratioA = Math.max(0, hpA / fighterA.stats.maxHp);
-    screen.bar(plyBarX, plyBarY + 1, plyBarW, ratioA, hpColor(ratioA), colors.dimmer);
-    screen.text(plyBarX + plyBarW, plyBarY + 1, ` ${Math.round(Math.max(0, hpA))}/${fighterA.stats.maxHp}`, hpColor(ratioA));
-
-    // Effects
+    // Effects (drawn after sprites, before HP bars so bars stay clean)
     projectiles.draw(screen);
     glitch.draw(screen);
     floats.draw(screen);
 
-    // Log
+    // Opponent info (drawn LAST so effects can't overwrite bars)
+    screen.text(oppBarX, 2, nameB, colors.p2, null, true);
+    const clampedHpB = Math.max(0, Math.min(hpB, fighterB.stats.maxHp));
+    const ratioB = clampedHpB / fighterB.stats.maxHp;
+    screen.bar(oppBarX, 3, barW, ratioB, hpColor(ratioB), colors.dimmer);
+    screen.text(oppBarX + barW, 3, ` ${Math.round(clampedHpB)}/${fighterB.stats.maxHp}`, hpColor(ratioB));
+
+    // Player info
+    screen.text(plyBarX, plyBarY, nameA, colors.p1, null, true);
+    const clampedHpA = Math.max(0, Math.min(hpA, fighterA.stats.maxHp));
+    const ratioA = clampedHpA / fighterA.stats.maxHp;
+    screen.bar(plyBarX, plyBarY + 1, barW, ratioA, hpColor(ratioA), colors.dimmer);
+    screen.text(plyBarX + barW, plyBarY + 1, ` ${Math.round(clampedHpA)}/${fighterA.stats.maxHp}`, hpColor(ratioA));
+
+    // Log divider (always visible)
     screen.hline(1, logY - 1, w - 2, '─', colors.dimmer);
     screen.text(3, logY - 1, ' BATTLE LOG ', colors.dim);
+  }
+
+  // Full scene draw including battle log + render
+  function drawScene() {
+    drawSceneBase();
+
+    // Log entries
     for (let i = 0; i < battleLog.length && i < logHeight; i++) {
       const entry = battleLog[i];
       const prefix = entry.text.startsWith('  ') ? '  ' : '› ';
@@ -351,16 +500,20 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     screen.render();
   }
 
-  // Animate a set of turn events over TURN_ANIM_MS
+  // Animate a set of turn events over TURN_ANIM_MS — delta-time aware
+  // All per-frame updates (matrix, effects, HP smooth) are handled by drawSceneBase
   function animateTurnEvents(events) {
     return new Promise((resolve) => {
       const eventSpacing = TURN_ANIM_MS / (events.length || 1);
       let eventIdx = 0;
       let elapsed = 0;
+      let lastTime = Date.now();
 
-      const interval = setInterval(() => {
-        frameCount++;
-        elapsed += FRAME_MS;
+      const tick = () => {
+        const now = Date.now();
+        const dt = now - lastTime;
+        lastTime = now;
+        elapsed += dt;
 
         // Fire events on schedule
         while (eventIdx < events.length && eventIdx * eventSpacing <= elapsed) {
@@ -368,104 +521,193 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
           eventIdx++;
         }
 
-        // Smooth HP
-        hpA += (targetHpA - hpA) * 0.15;
-        hpB += (targetHpB - hpB) * 0.15;
-        if (Math.abs(hpA - targetHpA) < 1) hpA = targetHpA;
-        if (Math.abs(hpB - targetHpB) < 1) hpB = targetHpB;
-
-        if (p1HitFrames > 0) p1HitFrames--;
-        if (p2HitFrames > 0) p2HitFrames--;
-
-        matrix.update();
-        glitch.update();
-        floats.update();
-        projectiles.update();
-
+        // drawScene handles all updates (matrix, effects, HP, hitFrames, frameCount)
         drawScene();
 
         if (elapsed >= TURN_ANIM_MS) {
-          clearInterval(interval);
           resolve();
+        } else {
+          setTimeout(tick, FRAME_MS);
         }
-      }, FRAME_MS);
+      };
+      setTimeout(tick, FRAME_MS);
     });
   }
 
   function processAnimEvent(event) {
     if (event.type === 'attack') {
-      const isA = event.who === 'a';
-      const fromX = isA ? plyCenterX + 6 : oppCenterX - 2;
-      const fromY = isA ? plyCenterY - 2 : oppCenterY + 2;
-      const toX = isA ? oppCenterX : plyCenterX + 2;
-      const toY = isA ? oppCenterY : plyCenterY;
+      // Map state slots to display positions
+      const dWho = toDisplay(event.who);       // display slot of attacker
+      const dTarget = toDisplay(event.target); // display slot of defender
+      const isMe = dWho === 'a';               // 'a' display = me (bottom)
+
+      const fromX = isMe ? plyCenterX + 6 : oppCenterX - 2;
+      const fromY = isMe ? plyCenterY - 2 : oppCenterY + 2;
+      const toX = isMe ? oppCenterX : plyCenterX + 2;
+      const toY = isMe ? oppCenterY : plyCenterY;
       projectiles.fire(fromX, fromY, toX, toY, event.move);
 
-      // Delayed damage
+      // Delayed damage — use display-mapped HP
       setTimeout(() => {
-        if (event.target === 'a') { targetHpA = event.hpA; p1HitFrames = 6; }
-        else { targetHpB = event.hpB; p2HitFrames = 6; }
-        glitch.burst(event.target === 'a' ? plyCenterX : oppCenterX, event.target === 'a' ? plyCenterY : oppCenterY, 6, 6);
+        if (dTarget === 'a') { targetHpA = isHost ? event.hpA : event.hpB; p1HitFrames = 6; }
+        else { targetHpB = isHost ? event.hpB : event.hpA; p2HitFrames = 6; }
+        const hitCX = dTarget === 'a' ? plyCenterX : oppCenterX;
+        const hitCY = dTarget === 'a' ? plyCenterY : oppCenterY;
+        glitch.burst(hitCX, hitCY, 6, 6);
         floats.add(
-          (event.target === 'a' ? plyCenterX : oppCenterX) - 2,
-          (event.target === 'a' ? plyCenterY : oppCenterY) - 3,
+          hitCX - 2, hitCY - 3,
           event.isCrit ? `★${event.damage}` : `${event.damage}`,
           event.isCrit ? colors.crit : colors.damage, 14
         );
         if (event.isCrit) glitch.screenTear(w, 4);
       }, 800);
 
-      const whoLabel = isA ? fighterA.name : fighterB.name;
+      const whoLabel = isMe ? nameA : nameB;
       let logLine = `${whoLabel.slice(0, 14)} → ${event.label}`;
       if (event.isCrit) logLine += ' ★CRIT';
       logLine += ` [${event.damage}]`;
-      addLog(logLine, event.isCrit ? colors.crit : (isA ? colors.p1 : colors.p2));
+      addLog(logLine, event.isCrit ? colors.crit : (isMe ? colors.p1 : colors.p2));
       addLog(`  ${event.flavor}`, colors.dimmer);
 
     } else if (event.type === 'dodge') {
-      const whoLabel = event.who === 'a' ? fighterA.name : fighterB.name;
+      const dWho = toDisplay(event.who);
+      const whoLabel = dWho === 'a' ? nameA : nameB;
       addLog(`${whoLabel.slice(0, 14)} dodged ${event.label}!`, colors.sky);
-      floats.add(event.who === 'a' ? plyCenterX : oppCenterX, event.who === 'a' ? plyCenterY - 3 : oppCenterY - 2, 'DODGE', colors.sky, 12);
+      const cx = dWho === 'a' ? plyCenterX : oppCenterX;
+      const cy = dWho === 'a' ? plyCenterY - 3 : oppCenterY - 2;
+      floats.add(cx, cy, 'DODGE', colors.sky, 12);
 
     } else if (event.type === 'heal') {
-      const whoLabel = event.who === 'a' ? fighterA.name : fighterB.name;
-      if (event.who === 'a') targetHpA = event.hpA;
-      else targetHpB = event.hpB;
+      const dWho = toDisplay(event.who);
+      const whoLabel = dWho === 'a' ? nameA : nameB;
+      if (dWho === 'a') targetHpA = isHost ? event.hpA : event.hpB;
+      else targetHpB = isHost ? event.hpB : event.hpA;
       addLog(`${whoLabel.slice(0, 14)} → ${event.label} [+${event.amount}]`, colors.mint);
-      floats.add(event.who === 'a' ? plyCenterX : oppCenterX, event.who === 'a' ? plyCenterY - 3 : oppCenterY - 2, `+${event.amount}`, colors.mint, 14);
+      const cx = dWho === 'a' ? plyCenterX : oppCenterX;
+      const cy = dWho === 'a' ? plyCenterY - 3 : oppCenterY - 2;
+      floats.add(cx, cy, `+${event.amount}`, colors.mint, 14);
 
     } else if (event.type === 'stunned') {
-      const whoLabel = event.who === 'a' ? fighterA.name : fighterB.name;
+      const dWho = toDisplay(event.who);
+      const whoLabel = dWho === 'a' ? nameA : nameB;
       addLog(`${whoLabel.slice(0, 14)} is STUNNED`, colors.rose);
 
     } else if (event.type === 'ko') {
-      if (event.loser === 'a') p1KO = true;
+      const dLoser = toDisplay(event.loser);
+      if (dLoser === 'a') p1KO = true;
       else p2KO = true;
-      glitch.screenTear(w, 8);
-      glitch.scatter(w / 2, h / 2, w, h, 25, 10);
+      glitch.screenTear(w, 5);
+      glitch.scatter(w / 2, h / 2, w, h, 10, 6);
     }
   }
 
-  // Run the render loop for a duration (idle animation)
+  // Run the render loop for a duration (idle animation) — delta-time aware
+  // All per-frame updates handled by drawSceneBase via drawScene
   function animateIdle(durationMs) {
     return new Promise((resolve) => {
       let elapsed = 0;
-      const interval = setInterval(() => {
-        frameCount++;
-        elapsed += FRAME_MS;
-        matrix.update();
-        glitch.update();
-        floats.update();
-        projectiles.update();
-        if (p1HitFrames > 0) p1HitFrames--;
-        if (p2HitFrames > 0) p2HitFrames--;
-        hpA += (targetHpA - hpA) * 0.15;
-        hpB += (targetHpB - hpB) * 0.15;
+      let lastTime = Date.now();
+
+      const tick = () => {
+        const now = Date.now();
+        const dt = now - lastTime;
+        lastTime = now;
+        elapsed += dt;
+
         drawScene();
-        if (elapsed >= durationMs) { clearInterval(interval); resolve(); }
-      }, FRAME_MS);
+
+        if (elapsed >= durationMs) resolve();
+        else setTimeout(tick, FRAME_MS);
+      };
+      setTimeout(tick, FRAME_MS);
     });
   }
+}
+
+// ─── Battle intro sequence ───
+async function battleIntro(screen, matrix, nameA, nameB, fighterA, fighterB, w, h) {
+  const cx = Math.floor(w / 2);
+  const cy = Math.floor(h / 2);
+
+  // Phase 1: Matrix rain fills in (~0.75s)
+  for (let i = 0; i < 15; i++) {
+    screen.clear();
+    matrix.update();
+    matrix.draw(screen);
+    // Dim bar expanding from center
+    const spread = Math.floor((i / 15) * (w / 2));
+    for (let x = cx - spread; x <= cx + spread; x++) {
+      if (x >= 0 && x < w) screen.set(x, cy, '─', colors.dimmer);
+    }
+    screen.render();
+    await sleep(FRAME_MS);
+  }
+
+  // Phase 2: VS screen with callsigns (~1.25s)
+  const phases = 25;
+  for (let i = 0; i < phases; i++) {
+    screen.clear();
+    matrix.update();
+    matrix.draw(screen);
+
+    // Horizontal divider
+    screen.hline(4, cy, w - 8, '═', colors.dimmer);
+
+    // VS badge
+    const vsGlow = i % 10 < 5 ? colors.gold : colors.peach;
+    screen.text(cx - 2, cy, ' VS ', vsGlow, null, true);
+
+    // Player A name — slide in from left (faster: i*3 instead of i*2)
+    const slideA = Math.min(i * 3, cx - 14);
+    screen.text(Math.max(2, slideA), cy - 2, nameA, colors.p1, null, true);
+    // Subtitle
+    if (i > 6) {
+      screen.text(Math.max(2, slideA), cy - 1, fighterA.gpu?.slice(0, 28) || '', colors.dim);
+    }
+
+    // Player B name — slide in from right
+    const slideB = Math.min(i * 3, cx - 14);
+    const bx = Math.max(cx + 2, w - 2 - slideB - nameB.length);
+    screen.text(bx, cy + 2, nameB, colors.p2, null, true);
+    if (i > 6) {
+      screen.text(bx, cy + 3, fighterB.gpu?.slice(0, 28) || '', colors.dim);
+    }
+
+    // Decorative corners
+    if (i > 10) {
+      screen.text(2, cy - 3, '╔══', colors.p1);
+      screen.text(w - 5, cy + 4, '══╝', colors.p2);
+    }
+
+    // "INITIALIZING" flicker
+    if (i > 16) {
+      const dots = '.'.repeat((i % 4));
+      screen.centerText(h - 3, `INITIALIZING BATTLE${dots}`, i % 6 < 3 ? colors.dim : colors.dimmer);
+    }
+
+    screen.render();
+    await sleep(FRAME_MS);
+  }
+
+  // Phase 3: Flash and clear (0.5s)
+  for (let i = 0; i < 10; i++) {
+    screen.clear();
+    if (i < 3) {
+      // Brief white flash effect
+      for (let y = cy - 1; y <= cy + 1; y++) {
+        screen.hline(0, y, w, '█', i === 0 ? colors.white : colors.dim);
+      }
+    } else {
+      matrix.update();
+      matrix.draw(screen);
+    }
+    screen.render();
+    await sleep(FRAME_MS);
+  }
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
 }
 
 module.exports = { renderTurnBattle };

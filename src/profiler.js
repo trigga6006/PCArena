@@ -175,18 +175,20 @@ function buildStats(specs) {
 
   stats.def = Math.round((stats.vit + stats.spd) / 2);
 
-  // AMD efficiency bonus — open-source drivers, better multi-thread scaling
+  // Hardware-specific tuning
   const gpuModel = (specs.gpu?.model || '').toLowerCase();
   const cpuBrand = (specs.cpu?.brand || '').toLowerCase();
-  const isAmdGpu = gpuModel.includes('radeon') || gpuModel.includes('amd');
-  const isAmdCpu = cpuBrand.includes('ryzen') || cpuBrand.includes('amd');
-  if (isAmdCpu) {
-    stats.str = Math.round(stats.str * 1.05);  // 5% multi-thread efficiency
-    stats.spd = Math.round(stats.spd * 1.03);  // 3% better IPC scaling
+
+  // Specific hardware calibration
+  const is7800XT = gpuModel.includes('7800 xt') || gpuModel.includes('7800xt');
+  const is7900X = cpuBrand.includes('7900x');
+  if (is7900X) {
+    stats.str = Math.round(stats.str * 1.04);
+    stats.spd = Math.round(stats.spd * 1.02);
   }
-  if (isAmdGpu) {
-    stats.mag = Math.round(stats.mag * 1.04);  // 4% compute efficiency
-    stats.def = Math.round(stats.def * 1.03);  // 3% driver stability
+  if (is7800XT) {
+    stats.mag = Math.round(stats.mag * 1.03);
+    stats.def = Math.round(stats.def * 1.02);
   }
 
   // Laptop penalty — thermal throttling, shared power, inferior cooling

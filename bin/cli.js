@@ -43,15 +43,70 @@ async function buildFighter(specs) {
   };
 }
 
-function printFighter(fighter, color) {
+function printFighter(fighter, color, compact = false) {
   const s = fighter.stats;
-  console.log(`${color}  ╭────────────────────────────────────╮${RESET}`);
-  console.log(`${color}  │  ${fighter.name.padEnd(34)}│${RESET}`);
-  console.log(`${color}  │  GPU: ${fighter.gpu.padEnd(29)}│${RESET}`);
-  console.log(`${color}  ├────────────────────────────────────┤${RESET}`);
-  console.log(`${color}  │  HP:${String(s.hp).padStart(5)}  STR:${String(s.str).padStart(3)}  MAG:${String(s.mag).padStart(3)}      │${RESET}`);
-  console.log(`${color}  │          SPD:${String(s.spd).padStart(3)}  DEF:${String(s.def).padStart(3)}      │${RESET}`);
-  console.log(`${color}  ╰────────────────────────────────────╯${RESET}`);
+  if (compact) {
+    console.log(`${color}  ╭────────────────────────────────────╮${RESET}`);
+    console.log(`${color}  │  ${fighter.name.padEnd(34)}│${RESET}`);
+    console.log(`${color}  │  GPU: ${fighter.gpu.padEnd(29)}│${RESET}`);
+    console.log(`${color}  ├────────────────────────────────────┤${RESET}`);
+    console.log(`${color}  │  HP:${String(s.hp).padStart(5)}  STR:${String(s.str).padStart(3)}  MAG:${String(s.mag).padStart(3)}      │${RESET}`);
+    console.log(`${color}  │          SPD:${String(s.spd).padStart(3)}  DEF:${String(s.def).padStart(3)}      │${RESET}`);
+    console.log(`${color}  ╰────────────────────────────────────╯${RESET}`);
+    return;
+  }
+  const sp = fighter.specs || {};
+  const dim = '\x1b[38;2;100;100;130m';
+  const bright = '\x1b[38;2;230;230;245m';
+  const bar = (val, max = 100, width = 16) => {
+    const filled = Math.round((val / max) * width);
+    const full = '█'.repeat(Math.min(filled, width));
+    const empty = '░'.repeat(width - Math.min(filled, width));
+    return `${full}${empty}`;
+  };
+
+  console.log(`${color}  ╭──────────────────────────────────────────────────╮${RESET}`);
+  console.log(`${color}  │  ${bright}${fighter.name.padEnd(48)}${color}│${RESET}`);
+  console.log(`${color}  ├──────────────────────────────────────────────────┤${RESET}`);
+
+  // CPU → STR
+  const cpuLabel = (sp.cpu?.brand || 'Unknown').slice(0, 28);
+  const cores = sp.cpu?.cores || '?';
+  const threads = sp.cpu?.threads || '?';
+  const ghz = sp.cpu?.speedMax ? `${sp.cpu.speedMax}GHz` : '';
+  console.log(`${color}  │  ${dim}CPU  ${bright}${cpuLabel.padEnd(30)}${color}│${RESET}`);
+  console.log(`${color}  │  ${dim}     ${cores}C/${threads}T ${ghz.padEnd(10)} ${bright}STR ${bar(s.str)} ${String(s.str).padStart(3)}${color} │${RESET}`);
+
+  // GPU → MAG
+  const gpuLabel = (fighter.gpu || 'Integrated').slice(0, 28);
+  const vram = sp.gpu?.vramMB ? `${Math.round(sp.gpu.vramMB / 1024)}GB` : '0GB';
+  console.log(`${color}  │  ${dim}GPU  ${bright}${gpuLabel.padEnd(30)}${color}│${RESET}`);
+  console.log(`${color}  │  ${dim}     VRAM ${vram.padEnd(11)} ${bright}MAG ${bar(s.mag)} ${String(s.mag).padStart(3)}${color} │${RESET}`);
+
+  // RAM → HP/VIT
+  const ramGB = sp.ram?.totalGB || '?';
+  console.log(`${color}  │  ${dim}RAM  ${bright}${(ramGB + 'GB').padEnd(30)}${color}│${RESET}`);
+  console.log(`${color}  │  ${dim}                          ${bright}HP  ${bar(s.hp, 2000)} ${String(s.hp).padStart(4)}${color}│${RESET}`);
+
+  // Storage → SPD
+  const storType = sp.storage?.type || 'Unknown';
+  const storName = (sp.storage?.name || '').slice(0, 22);
+  console.log(`${color}  │  ${dim}DISK ${bright}${(storType + (storName ? ' — ' + storName : '')).padEnd(30).slice(0,30)}${color}│${RESET}`);
+  console.log(`${color}  │  ${dim}                          ${bright}SPD ${bar(s.spd)} ${String(s.spd).padStart(3)}${color} │${RESET}`);
+
+  // DEF (derived)
+  console.log(`${color}  │  ${dim}                          ${bright}DEF ${bar(s.def)} ${String(s.def).padStart(3)}${color} │${RESET}`);
+
+  // Flags
+  const flags = [];
+  if (s.isLaptop) flags.push('LAPTOP (-18%)');
+  if (fighter.sprite?.hw?.brand) flags.push(fighter.sprite.hw.brand.toUpperCase().replace('_', ' '));
+  if (fighter.sprite?.hw?.tier) flags.push(fighter.sprite.hw.tier.toUpperCase() + ' TIER');
+  if (flags.length) {
+    console.log(`${color}  │  ${dim}${flags.join(' · ').padEnd(48)}${color}│${RESET}`);
+  }
+
+  console.log(`${color}  ╰──────────────────────────────────────────────────╯${RESET}`);
 }
 
 // Mock opponent for demo mode (a modest machine)
@@ -114,7 +169,7 @@ async function main() {
         }
 
         console.log('\x1b[38;2;180;160;240m  ◆ Opponent found!\x1b[0m');
-        printFighter(opponent, '\x1b[38;2;180;160;240m');
+        printFighter(opponent, '\x1b[38;2;180;160;240m', true);
 
         const seed = combinedSeed(myFighter.id, opponent.id) ^ matchSeed;
         let winner;
@@ -180,7 +235,7 @@ async function main() {
         }
 
         console.log('\x1b[38;2;130;220;235m  ◆ Opponent found!\x1b[0m');
-        printFighter(opponent, '\x1b[38;2;130;220;235m');
+        printFighter(opponent, '\x1b[38;2;130;220;235m', true);
 
         const seed = combinedSeed(opponent.id, myFighter.id) ^ matchSeed;
         let winner;

@@ -15,6 +15,7 @@ const { selectMove } = require('./moveselect');
 const { createBattleState, processTurn, isOver, getWinner } = require('./turnbattle');
 const { submitAndWait, endBattle } = require('./turnrelay');
 const { useItem, ITEMS } = require('./items');
+const { preBattleLobby } = require('./prebattle');
 
 const FPS = 20;
 const FRAME_MS = 1000 / FPS;
@@ -190,6 +191,15 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
   }
 
   screen.enter();
+
+  // ─── Pre-battle lobby: pick loadout + review bag ───
+  try {
+    const finalMoves = await preBattleLobby(fighterA, fighterB, screen);
+    // Update movesetA with player's final loadout choice
+    movesetA = finalMoves;
+  } catch (e) {
+    // If pre-battle fails (e.g. non-interactive), keep default moveset
+  }
 
   // ─── Main battle loop ───
   try {

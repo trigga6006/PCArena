@@ -332,10 +332,10 @@ async function renderBattle(fighterA, fighterB, events) {
     const timerStr = `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, '0')}`;
     screen.text(w - 8, 0, timerStr, colors.dim);
 
-    // ─── Opponent info (top, near opponent) ───
-    const oppNameX = oppX - 12;
-    const oppInfoY = oppY;
-    screen.text(oppNameX, oppInfoY, fighterB.name.slice(0, 20), colors.p2, null, true);
+    // ─── Opponent info (top-left, Pokemon-style — away from sprite) ───
+    const oppNameX = 3;
+    const oppInfoY = 2;
+    screen.text(oppNameX, oppInfoY, fighterB.name.slice(0, 24), colors.p2, null, true);
     // HP bar
     const ratioB = Math.max(0, hpB / fighterB.stats.maxHp);
     screen.bar(oppNameX, oppInfoY + 1, oppBarW, ratioB, hpColor(ratioB), colors.dimmer);

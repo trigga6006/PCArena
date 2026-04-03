@@ -167,15 +167,34 @@ async function main() {
         console.log('\n\x1b[38;2;240;220;140m  ◆ Battle starting in 3 seconds...\x1b[0m\n');
         await sleep(3000);
 
+        // Simulate in canonical order (host=A, joiner=B) for deterministic results
         const seed = combinedSeed(opponent.id, myFighter.id);
         const events = simulate(opponent, myFighter, seed);
-        const winner = await renderBattle(opponent, myFighter, events);
+
+        // Swap perspective: remap events so joiner sees THEMSELVES in the foreground
+        const swapped = events.map(e => {
+          const s = { ...e };
+          // Swap all a↔b references
+          const swapAB = v => v === 'a' ? 'b' : v === 'b' ? 'a' : v;
+          if ('who' in s) s.who = swapAB(s.who);
+          if ('target' in s) s.target = swapAB(s.target);
+          if ('winner' in s) s.winner = swapAB(s.winner);
+          if ('loser' in s) s.loser = swapAB(s.loser);
+          if ('attacker' in s) s.attacker = swapAB(s.attacker);
+          // Swap HP values
+          const tmpHp = s.hpA; s.hpA = s.hpB; s.hpB = tmpHp;
+          const tmpMax = s.maxHpA; s.maxHpA = s.maxHpB; s.maxHpB = tmpMax;
+          const tmpFinal = s.finalHpA; s.finalHpA = s.finalHpB; s.finalHpB = tmpFinal;
+          return s;
+        });
+
+        const winner = await renderBattle(myFighter, opponent, swapped);
 
         console.log('');
-        if (winner === 'b') {
+        if (winner === 'a') {
           console.log('\x1b[38;2;240;220;140m  ★ YOUR WORKSTATION WINS! ★\x1b[0m');
         } else {
-          console.log('\x1b[38;2;130;220;235m  Host\'s workstation wins.\x1b[0m');
+          console.log('\x1b[38;2;130;220;235m  Opponent\'s workstation wins.\x1b[0m');
         }
         console.log('');
         break;

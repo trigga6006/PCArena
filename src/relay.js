@@ -95,7 +95,11 @@ async function hostOnline(myFighter, relayUrl = DEFAULT_RELAY_URL) {
         return { opponent: result.fighter, roomCode: code, matchSeed: result.matchSeed || matchSeed };
       }
     } catch (err) {
-      // Transient error — keep polling
+      // Rate limited — back off and retry
+      if (err.message.includes('Rate limit') || err.message.includes('429')) {
+        await sleep(2000);
+      }
+      // Only throw if we're truly at the end of the timeout
       if (Date.now() - start > POLL_TIMEOUT - POLL_INTERVAL) throw err;
     }
   }

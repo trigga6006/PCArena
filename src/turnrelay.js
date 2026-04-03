@@ -57,9 +57,17 @@ async function submitAndWait(relayUrl, roomCode, role, moveName, turnNum) {
   const start = Date.now();
   while (Date.now() - start < TURN_TIMEOUT) {
     await sleep(POLL_INTERVAL);
-    const result = await httpRequest(`${base}/rooms/${code}/turn?t=${turnNum}`, 'GET');
-    if (result.status === 'ready') {
-      return { hostMove: result.hostMove, joinerMove: result.joinerMove };
+    try {
+      const result = await httpRequest(`${base}/rooms/${code}/turn?t=${turnNum}`, 'GET');
+      if (result.status === 'ready') {
+        return { hostMove: result.hostMove, joinerMove: result.joinerMove };
+      }
+    } catch (err) {
+      // Rate limited or transient error — back off and retry
+      if (err.message.includes('Rate limit') || err.message.includes('429')) {
+        await sleep(2000);
+      }
+      // Don't crash — keep polling unless truly timed out
     }
   }
 

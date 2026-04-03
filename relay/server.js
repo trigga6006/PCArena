@@ -13,7 +13,7 @@ const MAX_BODY = 8192;          // 8KB max payload
 const ROOM_TTL = 15 * 60_000;  // 15 min room lifetime
 const ROOM_LIMIT = 100;         // max concurrent rooms
 const CLEANUP_INTERVAL = 30_000;
-const RATE_LIMIT = 10;          // requests per minute per IP
+const RATE_LIMIT = 120;         // requests per minute per IP (500ms polling = 120/min)
 const RATE_WINDOW = 60_000;
 
 // ─── Room code alphabet (no ambiguous I/O/0/1) ───

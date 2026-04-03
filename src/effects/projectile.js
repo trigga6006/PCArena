@@ -212,6 +212,129 @@ const MOVE_ANIMS = {
     trailLen: 3,
     screenEffect: 'glitchWave',
   },
+
+  // ══════ NEW PHYSICAL ══════
+  STACK_SMASH: {
+    style: 'slam',            // heavy overhead slam — screen shakes
+    lead: ['█', '▓', '█'],
+    trail: ['▓', '▒', '▒', '░', '·'],
+    color: rgb(240, 120, 80),
+    trailColor: rgb(180, 80, 50),
+    speed: 0.05,
+    trailLen: 6,
+    screenEffect: 'shake',
+  },
+  PIPELINE_FLUSH: {
+    style: 'flush',           // NEW: horizontal bands sweep across the screen like data clearing
+    lead: ['═', '═', '═'],
+    trail: [],
+    color: colors.peach,
+    trailColor: colors.dimmer,
+    speed: 0.06,
+    trailLen: 0,
+    flushLines: 5,
+    screenEffect: null,
+  },
+  HYPER_THREAD: {
+    style: 'helix',           // NEW: double helix spiral — two intertwined projectiles
+    lead: ['◆', '◇'],
+    trail: ['·', '·', '·'],
+    color: rgb(255, 180, 100),
+    trailColor: rgb(200, 120, 60),
+    speed: 0.06,
+    trailLen: 8,
+    screenEffect: null,
+  },
+
+  // ══════ NEW MAGIC ══════
+  COMPUTE_WAVE: {
+    style: 'codestorm',       // NEW: storm of code fragments swirling around the target
+    lead: [],
+    trail: [],
+    color: colors.cyan,
+    trailColor: colors.dimmer,
+    speed: 0.04,
+    trailLen: 0,
+    stormRadius: 8,
+    stormCount: 15,
+    screenEffect: null,
+  },
+  FRAMEBUFFER_BOMB: {
+    style: 'explosion',       // NEW: expanding ring of pixels from target center
+    lead: ['■', '□', '▪', '▫'],
+    trail: [],
+    color: colors.rose,
+    trailColor: colors.coral,
+    speed: 0.05,
+    trailLen: 0,
+    screenEffect: 'flash',
+  },
+  DLSS_UPSCALE: {
+    style: 'upscale',         // NEW: small projectile that GROWS as it travels, arriving huge
+    lead: ['·', '●', '◆', '█'],
+    trail: ['░', '▒', '▓'],
+    color: rgb(100, 220, 255),
+    trailColor: rgb(60, 150, 200),
+    speed: 0.05,
+    trailLen: 10,
+    screenEffect: 'flash',
+  },
+
+  // ══════ NEW SPEED ══════
+  QUICK_FORMAT: {
+    style: 'wipe',            // NEW: progress bar sweeps across target area, "formatting"
+    lead: ['█'],
+    trail: [],
+    color: colors.sky,
+    trailColor: colors.dimmer,
+    speed: 0.04,
+    trailLen: 0,
+    screenEffect: null,
+  },
+  DEFRAG_STRIKE: {
+    style: 'scatter_reform',  // NEW: target breaks into pieces, then snaps back together (damage applied)
+    lead: ['▪', '▫', '■', '□'],
+    trail: [],
+    color: rgb(180, 200, 140),
+    trailColor: colors.dim,
+    speed: 0.04,
+    trailLen: 0,
+    count: 10,
+    screenEffect: null,
+  },
+
+  // ══════ NEW SPECIAL ══════
+  MEMORY_LEAK: {
+    style: 'drip',            // NEW: slow dripping characters falling from target, persistent feel
+    lead: ['▓', '▒', '░', '·'],
+    trail: [],
+    color: rgb(160, 255, 120),
+    trailColor: rgb(80, 180, 60),
+    speed: 0.04,
+    trailLen: 0,
+    dripCount: 8,
+    screenEffect: null,
+  },
+  SAFE_MODE: {
+    style: 'shield_up',      // NEW: protective dome of characters forming around self
+    lead: ['╔', '═', '╗', '║', '╚', '╝'],
+    trail: [],
+    color: rgb(140, 190, 250),
+    trailColor: rgb(80, 120, 180),
+    speed: 0.05,
+    trailLen: 0,
+    screenEffect: null,
+  },
+  ROOTKIT: {
+    style: 'infiltrate',     // NEW: invisible approach, then sudden burst of code at target
+    lead: [],
+    trail: [],
+    color: rgb(180, 40, 60),
+    trailColor: rgb(120, 25, 40),
+    speed: 0.04,
+    trailLen: 0,
+    screenEffect: 'glitchWave',
+  },
 };
 
 // Fallback for moves not in the map
@@ -275,6 +398,59 @@ class Projectile {
         });
       }
     }
+    // Codestorm: orbiting code fragments around target
+    if (this.anim.style === 'codestorm') {
+      const CODE_BITS = ['if()', 'for{}', '0xFF', 'null', 'sudo', 'rm -f', '>>>',  'err!', '&&', '||', 'int', 'void', '$_', '{}', '[];'];
+      const count = this.anim.stormCount || 12;
+      for (let i = 0; i < count; i++) {
+        this.subProjectiles.push({
+          angle: rng.float(0, Math.PI * 2),
+          radius: rng.float(3, this.anim.stormRadius || 8),
+          speed: rng.float(0.08, 0.2) * (rng.chance(0.5) ? 1 : -1),
+          text: CODE_BITS[Math.floor(rng.next() * CODE_BITS.length)],
+          life: rng.int(12, 22),
+        });
+      }
+    }
+    // Drip: falling characters from target area
+    if (this.anim.style === 'drip') {
+      const count = this.anim.dripCount || 6;
+      for (let i = 0; i < count; i++) {
+        this.subProjectiles.push({
+          x: endX + rng.int(-5, 5),
+          y: endY + rng.int(-2, 0),
+          speed: rng.float(0.15, 0.4),
+          char: this.anim.lead[i % this.anim.lead.length],
+          life: rng.int(10, 20),
+          delay: i * 2,
+        });
+      }
+    }
+    // Scatter_reform: pieces explode out then converge back
+    if (this.anim.style === 'scatter_reform') {
+      const count = this.anim.count || 10;
+      for (let i = 0; i < count; i++) {
+        const angle = rng.float(0, Math.PI * 2);
+        const dist = rng.float(4, 10);
+        this.subProjectiles.push({
+          homeX: endX,
+          homeY: endY,
+          angle,
+          dist,
+          char: this.anim.lead[i % this.anim.lead.length],
+        });
+      }
+    }
+    // Explosion: expanding ring of particles
+    if (this.anim.style === 'explosion') {
+      for (let i = 0; i < 16; i++) {
+        const angle = (i / 16) * Math.PI * 2;
+        this.subProjectiles.push({
+          angle,
+          char: this.anim.lead[i % this.anim.lead.length],
+        });
+      }
+    }
   }
 
   update() {
@@ -286,8 +462,9 @@ class Projectile {
       return;
     }
 
-    // Non-traveling styles (fullscreen, heal) — just have a duration
-    if (this.anim.style === 'fullscreen' || this.anim.style === 'heal') {
+    // Non-traveling styles — just have a duration, no position tracking
+    const durationOnly = ['fullscreen','heal','codestorm','explosion','drip','shield_up','wipe','flush','scatter_reform','infiltrate'];
+    if (durationOnly.includes(this.anim.style)) {
       this.progress += this.anim.speed;
       if (this.progress >= 1.0) this.alive = false;
       return;
@@ -549,6 +726,258 @@ class Projectile {
       if (this.alive) {
         const char = a.lead[Math.floor(this.rng.next() * a.lead.length)];
         screen.set(Math.round(this.x), Math.round(this.y), char, a.color, null, true);
+      }
+      return;
+    }
+
+    // ── CODESTORM: orbiting code fragments around target ──
+    if (a.style === 'codestorm') {
+      if (!this.alive) return;
+      const t = this.progress;
+      const cx = this.endX;
+      const cy = this.endY;
+      for (const p of this.subProjectiles) {
+        if (p.life <= 0) continue;
+        p.life--;
+        p.angle += p.speed;
+        const fadeIn = Math.min(1, t * 4);
+        const r = p.radius * fadeIn;
+        const px = cx + Math.round(Math.cos(p.angle) * r);
+        const py = cy + Math.round(Math.sin(p.angle) * r * 0.5);
+        screen.text(px, py, p.text, t > 0.7 ? a.color : a.trailColor, null, t > 0.5);
+      }
+      // Central vortex
+      if (t > 0.3) {
+        screen.set(cx, cy, '╳', a.color, null, true);
+        screen.set(cx-1, cy, '╱', a.trailColor);
+        screen.set(cx+1, cy, '╲', a.trailColor);
+      }
+      return;
+    }
+
+    // ── EXPLOSION: expanding ring from target ──
+    if (a.style === 'explosion') {
+      if (!this.alive) return;
+      const t = this.progress;
+      const cx = this.endX;
+      const cy = this.endY;
+      const maxR = 8;
+      const r = t * maxR;
+      for (const p of this.subProjectiles) {
+        const px = cx + Math.round(Math.cos(p.angle) * r);
+        const py = cy + Math.round(Math.sin(p.angle) * r * 0.45);
+        const fade = 1 - t;
+        screen.set(px, py, p.char, fade > 0.4 ? a.color : a.trailColor, null, fade > 0.6);
+      }
+      // Impact flash at center
+      if (t < 0.3) {
+        screen.set(cx, cy, '█', a.color, null, true);
+        screen.set(cx-1, cy, '▓', a.color); screen.set(cx+1, cy, '▓', a.color);
+        screen.set(cx, cy-1, '▓', a.color); screen.set(cx, cy+1, '▓', a.color);
+      }
+      return;
+    }
+
+    // ── FLUSH: horizontal data bands sweep across screen ──
+    if (a.style === 'flush') {
+      if (!this.alive) return;
+      const t = this.progress;
+      const lines = a.flushLines || 5;
+      for (let i = 0; i < lines; i++) {
+        const lineY = 3 + Math.floor((h - 10) * ((i + 0.5) / lines));
+        const sweepX = Math.round(t * w);
+        const bandW = 12;
+        for (let dx = 0; dx < bandW; dx++) {
+          const x = sweepX - dx;
+          if (x < 0 || x >= w) continue;
+          const fade = 1 - dx / bandW;
+          const char = fade > 0.7 ? '█' : fade > 0.4 ? '▓' : '░';
+          screen.set(x, lineY, char, fade > 0.5 ? a.color : a.trailColor);
+        }
+      }
+      return;
+    }
+
+    // ── HELIX: double spiral projectile ──
+    if (a.style === 'helix') {
+      // Trail
+      for (let i = 0; i < this.trail.length; i++) {
+        const pos = this.trail[i];
+        const t = i / this.trail.length;
+        const px = Math.round(pos.x);
+        const py = Math.round(pos.y);
+        const offset = Math.sin(t * Math.PI * 8) * 2;
+        screen.set(px, py + Math.round(offset), '·', a.trailColor);
+        screen.set(px, py - Math.round(offset), '·', a.trailColor);
+      }
+      if (this.alive) {
+        const px = Math.round(this.x);
+        const py = Math.round(this.y);
+        const t = this.progress;
+        const offset = Math.sin(t * Math.PI * 8) * 2;
+        screen.set(px, py + Math.round(offset), a.lead[0], a.color, null, true);
+        screen.set(px, py - Math.round(offset), a.lead[1] || a.lead[0], a.color, null, true);
+        // Connecting line
+        const minY = py - Math.abs(Math.round(offset));
+        const maxY = py + Math.abs(Math.round(offset));
+        for (let dy = minY; dy <= maxY; dy++) {
+          screen.set(px, dy, '│', a.trailColor);
+        }
+      }
+      return;
+    }
+
+    // ── UPSCALE: projectile grows as it travels ──
+    if (a.style === 'upscale') {
+      // Trail gets progressively larger
+      for (let i = 0; i < this.trail.length; i++) {
+        const pos = this.trail[i];
+        const age = i / Math.max(this.trail.length, 1);
+        const size = Math.floor(age * 3);
+        const px = Math.round(pos.x);
+        const py = Math.round(pos.y);
+        const char = a.trail[Math.min(Math.floor(age * a.trail.length), a.trail.length - 1)];
+        for (let dy = -size; dy <= size; dy++) {
+          screen.set(px, py + dy, char, a.trailColor);
+        }
+      }
+      if (this.alive) {
+        const px = Math.round(this.x);
+        const py = Math.round(this.y);
+        const size = Math.floor(this.progress * 4);
+        const charIdx = Math.min(Math.floor(this.progress * a.lead.length), a.lead.length - 1);
+        for (let dy = -size; dy <= size; dy++) {
+          for (let dx = -Math.floor(size/2); dx <= Math.floor(size/2); dx++) {
+            screen.set(px + dx, py + dy, a.lead[charIdx], a.color, null, true);
+          }
+        }
+      }
+      return;
+    }
+
+    // ── WIPE: progress bar formatting the target area ──
+    if (a.style === 'wipe') {
+      if (!this.alive) return;
+      const t = this.progress;
+      const tx = this.endX;
+      const ty = this.endY;
+      // Format bar above/below target
+      const barW = 16;
+      const filled = Math.round(t * barW);
+      for (let i = 0; i < barW; i++) {
+        const x = tx - 8 + i;
+        screen.set(x, ty - 3, i < filled ? '█' : '░', i < filled ? a.color : a.trailColor);
+      }
+      // Percentage text
+      const pct = `${Math.round(t * 100)}%`;
+      screen.text(tx - 2, ty - 4, `FORMAT ${pct}`, a.color, null, true);
+      // Wipe lines across target sprite
+      if (t > 0.2) {
+        const wipeY = ty - 2 + Math.floor(t * 6);
+        for (let x = tx - 5; x <= tx + 5; x++) {
+          screen.set(x, wipeY, '░', a.color);
+        }
+      }
+      return;
+    }
+
+    // ── SCATTER_REFORM: pieces explode then converge ──
+    if (a.style === 'scatter_reform') {
+      if (!this.alive) return;
+      const t = this.progress;
+      for (const p of this.subProjectiles) {
+        let px, py;
+        if (t < 0.5) {
+          // Explode outward
+          const et = t * 2;
+          px = p.homeX + Math.cos(p.angle) * p.dist * et;
+          py = p.homeY + Math.sin(p.angle) * p.dist * 0.5 * et;
+        } else {
+          // Converge back
+          const ct = (t - 0.5) * 2;
+          px = p.homeX + Math.cos(p.angle) * p.dist * (1 - ct);
+          py = p.homeY + Math.sin(p.angle) * p.dist * 0.5 * (1 - ct);
+        }
+        screen.set(Math.round(px), Math.round(py), p.char, t < 0.5 ? a.color : a.trailColor, null, t > 0.3);
+      }
+      return;
+    }
+
+    // ── DRIP: characters dripping down from target ──
+    if (a.style === 'drip') {
+      if (!this.alive) return;
+      for (const p of this.subProjectiles) {
+        if (this.age < (p.delay || 0)) continue;
+        if (p.life <= 0) continue;
+        p.life--;
+        p.y += p.speed;
+        const fade = p.life / 20;
+        screen.set(Math.round(p.x), Math.round(p.y), p.char, fade > 0.5 ? a.color : a.trailColor);
+        screen.set(Math.round(p.x), Math.round(p.y) - 1, '·', a.trailColor);
+      }
+      return;
+    }
+
+    // ── SHIELD_UP: protective dome forming around self ──
+    if (a.style === 'shield_up') {
+      if (!this.alive) return;
+      const t = this.progress;
+      const cx = this.startX + 5;
+      const cy = this.startY + 4;
+      const r = 5 * Math.min(1, t * 2);
+      const segments = 12;
+      for (let i = 0; i < segments; i++) {
+        const angle = (i / segments) * Math.PI * 2;
+        const px = cx + Math.round(Math.cos(angle) * r);
+        const py = cy + Math.round(Math.sin(angle) * r * 0.45);
+        const char = a.lead[i % a.lead.length];
+        const fade = t > 0.7 ? (1 - t) * 3 : 1;
+        screen.set(px, py, char, fade > 0.5 ? a.color : a.trailColor, null, fade > 0.7);
+      }
+      // Fill inside with dim shield
+      if (t > 0.3 && t < 0.8) {
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -3; dx <= 3; dx++) {
+            if (Math.abs(dx) + Math.abs(dy) < 5) {
+              screen.set(cx + dx, cy + dy, '░', a.trailColor);
+            }
+          }
+        }
+      }
+      return;
+    }
+
+    // ── INFILTRATE: invisible approach, then sudden code burst ──
+    if (a.style === 'infiltrate') {
+      if (!this.alive) return;
+      const t = this.progress;
+      const tx = this.endX;
+      const ty = this.endY;
+      // Phase 1: subtle glitch hints moving toward target
+      if (t < 0.6) {
+        const hintCount = Math.floor(t * 8);
+        for (let i = 0; i < hintCount; i++) {
+          const ht = (t * 1.6 + i * 0.1) % 1;
+          const hx = this.startX + (tx - this.startX) * ht;
+          const hy = this.startY + (ty - this.startY) * ht;
+          if (this.rng.next() < 0.4) {
+            screen.set(Math.round(hx) + this.rng.int(-1,1), Math.round(hy), '·', colors.dimmer);
+          }
+        }
+      }
+      // Phase 2: sudden explosive burst of code at target
+      if (t > 0.6) {
+        const burstT = (t - 0.6) / 0.4;
+        const CODE = ['root@','chmod','0x00','exec','PRIV','####','>>>>','$$$$'];
+        const burstR = burstT * 6;
+        for (let i = 0; i < 10; i++) {
+          const angle = this.rng.float(0, Math.PI * 2);
+          const r = this.rng.float(0, burstR);
+          const bx = tx + Math.round(Math.cos(angle) * r);
+          const by = ty + Math.round(Math.sin(angle) * r * 0.5);
+          const text = CODE[Math.floor(this.rng.next() * CODE.length)];
+          screen.text(bx, by, text, burstT > 0.5 ? a.color : a.trailColor, null, burstT > 0.3);
+        }
       }
       return;
     }

@@ -97,8 +97,12 @@ async function renderBattle(fighterA, fighterB, events) {
   const startTime = Date.now();
 
   return new Promise((resolve) => {
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - startTime;
+    let stopped = false;
+
+    const tick = () => {
+      if (stopped) return;
+      const frameStart = Date.now();
+      const elapsed = frameStart - startTime;
       frameCount++;
 
       // Phase
@@ -166,13 +170,18 @@ async function renderBattle(fighterA, fighterB, events) {
       screen.render();
 
       if (elapsed >= TOTAL_DURATION_MS) {
-        clearInterval(interval);
+        stopped = true;
         setTimeout(() => {
           screen.exit();
           resolve(winner);
         }, 500);
+      } else {
+        // Subtract frame processing time from delay for consistent frame rate
+        const frameTime = Date.now() - frameStart;
+        setTimeout(tick, Math.max(1, FRAME_MS - frameTime));
       }
-    }, FRAME_MS);
+    };
+    tick(); // Start immediately
   });
 
   // ─── Event handling ───

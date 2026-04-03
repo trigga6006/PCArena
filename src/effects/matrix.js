@@ -15,16 +15,35 @@ class MatrixRain {
     for (let x = 0; x < width; x++) {
       this.columns.push({
         y: rng.int(-height, 0),         // start position (negative = delayed)
-        speed: rng.float(0.3, 1.2),      // cells per frame
+        speed: rng.float(0.5, 1.3),      // cells per frame — faster min for smoother motion
         length: rng.int(4, 14),           // trail length
         accumulator: 0,                   // sub-frame accumulation
-        active: rng.chance(0.55),         // slightly over half the columns active
+        active: rng.chance(0.75),         // 75% active for denser rain
         chars: [],                        // pre-generated characters
       });
 
       // Pre-fill character buffer
       for (let i = 0; i < height + 20; i++) {
         this.columns[x].chars.push(MATRIX_CHARS[Math.floor(rng.next() * MATRIX_CHARS.length)]);
+      }
+    }
+
+    // Pre-warm: advance all columns so rain is visible from frame 1
+    // Simulate ~30 frames of advancement
+    for (let f = 0; f < 30; f++) {
+      for (const col of this.columns) {
+        if (!col.active) continue;
+        col.accumulator += col.speed;
+        while (col.accumulator >= 1) {
+          col.y++;
+          col.accumulator -= 1;
+        }
+        if (col.y - col.length > this.height) {
+          col.y = this.rng.int(-3, -1);
+          col.speed = this.rng.float(0.5, 1.3);
+          col.length = this.rng.int(4, 14);
+          col.active = this.rng.chance(0.75);
+        }
       }
     }
   }
@@ -39,26 +58,38 @@ class MatrixRain {
       }
       // Reset column when it falls off screen
       if (col.y - col.length > this.height) {
-        col.y = this.rng.int(-8, -1);
-        col.speed = this.rng.float(0.3, 1.2);
+        col.y = this.rng.int(-3, -1);       // shorter delay before re-entering
+        col.speed = this.rng.float(0.5, 1.3);
         col.length = this.rng.int(4, 14);
-        col.active = this.rng.chance(0.55);
+        col.active = this.rng.chance(0.75);  // higher re-activation rate
       }
     }
   }
 
   // Render to screen buffer — draws BEHIND everything else
+  // Called right after screen.clear(), so all cells are empty — no need to check cell state
   draw(screen) {
-    for (let x = 0; x < this.width && x < screen.width; x++) {
+    const ez = this.exclusionZone;
+    const sh = screen.height;
+    const sw = screen.width;
+
+    for (let x = 0; x < this.width && x < sw; x++) {
       const col = this.columns[x];
       if (!col.active) continue;
 
-      for (let i = 0; i < col.length; i++) {
-        const y = Math.floor(col.y) - i;
-        if (y < 0 || y >= screen.height) continue;
+      const colY = Math.floor(col.y);
+      const len = col.length;
+      const chars = col.chars;
 
-        const charIdx = (y + 100) % col.chars.length;
-        const brightness = i === 0 ? 1.0 : 1.0 - (i / col.length);
+      for (let i = 0; i < len; i++) {
+        const y = colY - i;
+        if (y < 0 || y >= sh) continue;
+
+        // Skip exclusion zone (log/UI area during move selection)
+        if (ez && x >= ez.x && x < ez.x + ez.w && y >= ez.y && y < ez.y + ez.h) continue;
+
+        const charIdx = (y + 100) % chars.length;
+        const brightness = i === 0 ? 1.0 : 1.0 - (i / len);
 
         let fg;
         if (brightness > 0.9) {
@@ -69,15 +100,7 @@ class MatrixRain {
           fg = colors.ghost;           // tail fades out
         }
 
-        // Skip exclusion zone (log/UI area during move selection)
-        const ez = this.exclusionZone;
-        if (ez && x >= ez.x && x < ez.x + ez.w && y >= ez.y && y < ez.y + ez.h) continue;
-
-        // Only draw in "empty" cells — don't overwrite UI elements
-        const cell = screen.buffer[y]?.[x];
-        if (cell && cell.char === ' ' && !cell.fg) {
-          screen.set(x, y, col.chars[charIdx], fg);
-        }
+        screen.set(x, y, chars[charIdx], fg);
       }
     }
   }

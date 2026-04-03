@@ -326,20 +326,25 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
         // Animate while waiting for opponent's move
         let waitDone = false;
-        const waitTimer = setInterval(() => {
+        let waitTimer;
+        const waitTick = () => {
           if (waitDone) return;
+          const t0 = Date.now();
           drawSceneBase();
           // Show waiting message in log area
           screen.text(logX, logY, '› Waiting for opponent...', colors.dim);
           const dots = '.'.repeat(Math.floor(Date.now() / 400) % 4);
           screen.text(logX, logY + 1, `  ${dots}`, colors.dimmer);
           screen.render();
-        }, FRAME_MS);
+          const spent = Date.now() - t0;
+          waitTimer = setTimeout(waitTick, Math.max(1, FRAME_MS - spent));
+        };
+        waitTimer = setTimeout(waitTick, 1);
 
         // Send move + item through relay; wait for opponent's move + item
         const result = await submitAndWait(relayUrl, roomCode, role, myMove.name, turnNum - 1, myItem?.id);
         waitDone = true;
-        clearInterval(waitTimer);
+        clearTimeout(waitTimer);
         const oppMoveName = role === 'host' ? result.joinerMove : result.hostMove;
         opponentMove = movesetB.find(m => m.name === oppMoveName) || movesetB[0];
 
@@ -527,10 +532,12 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         if (elapsed >= TURN_ANIM_MS) {
           resolve();
         } else {
-          setTimeout(tick, FRAME_MS);
+          // Subtract frame processing time from delay for consistent frame rate
+          const frameTime = Date.now() - now;
+          setTimeout(tick, Math.max(1, FRAME_MS - frameTime));
         }
       };
-      setTimeout(tick, FRAME_MS);
+      tick(); // Start immediately — no initial delay
     });
   }
 
@@ -617,9 +624,13 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         drawScene();
 
         if (elapsed >= durationMs) resolve();
-        else setTimeout(tick, FRAME_MS);
+        else {
+          // Subtract frame processing time from delay for consistent frame rate
+          const frameTime = Date.now() - now;
+          setTimeout(tick, Math.max(1, FRAME_MS - frameTime));
+        }
       };
-      setTimeout(tick, FRAME_MS);
+      tick(); // Start immediately — no initial delay
     });
   }
 }
@@ -628,6 +639,14 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 async function battleIntro(screen, matrix, nameA, nameB, fighterA, fighterB, w, h) {
   const cx = Math.floor(w / 2);
   const cy = Math.floor(h / 2);
+
+  // Helper: render a frame and sleep the remaining budget
+  async function frame() {
+    const t0 = Date.now();
+    screen.render();
+    const spent = Date.now() - t0;
+    await sleep(Math.max(1, FRAME_MS - spent));
+  }
 
   // Phase 1: Matrix rain fills in (~0.75s)
   for (let i = 0; i < 15; i++) {
@@ -639,8 +658,7 @@ async function battleIntro(screen, matrix, nameA, nameB, fighterA, fighterB, w, 
     for (let x = cx - spread; x <= cx + spread; x++) {
       if (x >= 0 && x < w) screen.set(x, cy, '─', colors.dimmer);
     }
-    screen.render();
-    await sleep(FRAME_MS);
+    await frame();
   }
 
   // Phase 2: VS screen with callsigns (~1.25s)
@@ -685,8 +703,7 @@ async function battleIntro(screen, matrix, nameA, nameB, fighterA, fighterB, w, 
       screen.centerText(h - 3, `INITIALIZING BATTLE${dots}`, i % 6 < 3 ? colors.dim : colors.dimmer);
     }
 
-    screen.render();
-    await sleep(FRAME_MS);
+    await frame();
   }
 
   // Phase 3: Flash and clear (0.5s)
@@ -701,8 +718,7 @@ async function battleIntro(screen, matrix, nameA, nameB, fighterA, fighterB, w, 
       matrix.update();
       matrix.draw(screen);
     }
-    screen.render();
-    await sleep(FRAME_MS);
+    await frame();
   }
 }
 

@@ -125,7 +125,7 @@ function selectMove(moves, screen, logX, logY, logW, logH, onTick) {
         const elapsed = Date.now() - tickStart;
         animTimer = setTimeout(tick, Math.max(0, TICK - elapsed));
       }
-      animTimer = setTimeout(tick, TICK);
+      animTimer = setTimeout(tick, 1); // Start immediately, no initial delay
     }
 
     function stopAnim() {

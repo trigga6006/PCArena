@@ -22,6 +22,7 @@ class Screen {
     this.active = false;
     this._firstRender = true;
     this._writePending = false;
+    this._pendingDirty = false;
   }
 
   _createBuffer() {
@@ -135,11 +136,27 @@ class Screen {
 
   // Row-level diff render: skip unchanged rows, redraw changed rows in full
   render() {
-    // Skip entire frame if stdout hasn't drained — avoids buffer buildup
-    if (this._writePending) return;
+    // If stdout is backed up, allow at most 1 pending frame (don't cascade-drop)
+    // Still update prev so diff state stays accurate when we resume
+    if (this._writePending) {
+      this._pendingDirty = true;
+      // Snapshot buffer → prev so next render has correct diff baseline
+      for (let y = 0; y < this.height; y++) {
+        const row = this.buffer[y];
+        const prow = this.prev[y];
+        for (let x = 0; x < this.width; x++) {
+          const c = row[x]; const p = prow[x];
+          p.char = c.char; p.fg = c.fg; p.bg = c.bg; p.bold = c.bold;
+        }
+      }
+      return;
+    }
 
-    const parts = [];
-    const full = this._firstRender;
+    // If we skipped frame(s), force full redraw so terminal catches up
+    const full = this._firstRender || this._pendingDirty;
+    this._pendingDirty = false;
+
+    let out = '';
 
     for (let y = 0; y < this.height; y++) {
       const row = this.buffer[y];
@@ -159,7 +176,7 @@ class Screen {
       }
 
       // Render the full row (correct color state guaranteed)
-      parts.push(`${ESC}${y + 1};1H`);
+      out += `${ESC}${y + 1};1H`;
       let lastFg = null;
       let lastBg = null;
       let lastBold = false;
@@ -171,17 +188,17 @@ class Screen {
         const needBold = c.bold !== lastBold;
 
         if (needFg || needBg || needBold) {
-          parts.push(RESET);
-          if (c.bg) parts.push(c.bg);
-          if (c.fg) parts.push(c.fg);
-          if (c.bold) parts.push(`${ESC}1m`);
+          out += RESET;
+          if (c.bg) out += c.bg;
+          if (c.fg) out += c.fg;
+          if (c.bold) out += `${ESC}1m`;
           lastFg = c.fg;
           lastBg = c.bg;
           lastBold = c.bold;
         }
-        parts.push(c.char);
+        out += c.char;
       }
-      parts.push(RESET);
+      out += RESET;
 
       // Snapshot this row into prev
       for (let x = 0; x < this.width; x++) {
@@ -190,8 +207,8 @@ class Screen {
       }
     }
 
-    if (parts.length > 0) {
-      const ok = process.stdout.write(parts.join(''));
+    if (out.length > 0) {
+      const ok = process.stdout.write(out);
       if (!ok) {
         this._writePending = true;
         process.stdout.once('drain', () => { this._writePending = false; });

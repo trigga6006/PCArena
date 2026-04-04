@@ -1,7 +1,7 @@
 {
-  "name": "workstation-off-relay",
+  "name": "kernelmon-relay",
   "version": "1.0.0",
-  "description": "Matchmaking relay for WorkstationOff battles",
+  "description": "Matchmaking relay for Kernelmon battles",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

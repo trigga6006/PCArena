@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ═══════════════════════════════════════════════════
-// WorkstationOff Relay — matchmaking server
+// Kernelmon Relay — matchmaking server
 // Zero dependencies. Brokers fighter JSON exchange
 // between two players, then gets out of the way.
 // ═══════════════════════════════════════════════════
@@ -10,11 +10,12 @@ const crypto = require('node:crypto');
 
 const PORT = parseInt(process.env.PORT, 10) || 8080;
 const MAX_BODY = 8192;          // 8KB max payload
-const ROOM_TTL = 15 * 60_000;  // 15 min room lifetime
+const ROOM_TTL = 30 * 60_000;  // 30 min room lifetime (refreshed on every turn)
 const ROOM_LIMIT = 100;         // max concurrent rooms
 const CLEANUP_INTERVAL = 30_000;
-const RATE_LIMIT = 10;          // requests per minute per IP
+const RATE_LIMIT = 600;         // requests per minute per IP (generous — this is a game server)
 const RATE_WINDOW = 60_000;
+const ENDED_ROOM_TTL = 60_000;
 
 // ─── Room code alphabet (no ambiguous I/O/0/1) ───
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -100,7 +101,9 @@ function error(res, status, msg) {
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
-    if (now - room.createdAt > ROOM_TTL) rooms.delete(code);
+    const roomAge = now - room.createdAt;
+    const endedAge = room.endedAt ? now - room.endedAt : 0;
+    if (room.endedAt ? endedAge > ENDED_ROOM_TTL : roomAge > ROOM_TTL) rooms.delete(code);
   }
   // Prune stale rate limit entries
   for (const [ip, entry] of rateLimits) {
@@ -148,7 +151,12 @@ const server = http.createServer(async (req, res) => {
         hostFighter: body.fighter,
         joinerFighter: null,
         createdAt: Date.now(),
+        endedAt: null,
         matchSeed,
+        // Turn-based state
+        turnNum: 0,
+        hostMove: null,
+        joinerMove: null,
       });
 
       console.log(`[+] Room ${code} created by ${ip} (${rooms.size} active)`);
@@ -163,10 +171,9 @@ const server = http.createServer(async (req, res) => {
       if (!room) return error(res, 404, 'Room not found or expired.');
 
       if (room.joinerFighter) {
-        // Match found — return joiner's fighter, schedule room cleanup
+        // Match found — return joiner's fighter (room stays alive for turns)
         const fighter = room.joinerFighter;
         const { matchSeed } = room;
-        setTimeout(() => rooms.delete(normalized), 10_000);
         return json(res, 200, { status: 'matched', fighter, matchSeed });
       }
       return json(res, 200, { status: 'waiting' });
@@ -188,6 +195,183 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { status: 'matched', fighter: room.hostFighter, matchSeed: room.matchSeed });
     }
 
+    // POST /rooms/:code/turn — submit a move choice
+    // Moves are stored per-turn-number. Submitting for a new turn auto-advances.
+    const turnPostMatch = method === 'POST' && path.match(/^\/rooms\/([A-Za-z0-9-]+)\/turn$/);
+    if (turnPostMatch) {
+      const normalized = normalizeCode(turnPostMatch[1]);
+      const room = rooms.get(normalized);
+      if (!room) return error(res, 404, 'Room not found or expired.');
+      if (room.endedAt) return json(res, 200, { status: 'ended' });
+
+      // Keep room alive during active battle
+      room.createdAt = Date.now();
+
+      const body = JSON.parse(await readBody(req));
+      const { role, move, turnNum } = body;
+      if (!role || !move) return error(res, 400, 'Missing role or move.');
+      if (role !== 'host' && role !== 'joiner') return error(res, 400, 'Invalid role.');
+
+      // Initialize turns storage if needed
+      if (!room.turns) room.turns = {};
+
+      // Store move for the requested turn
+      const tn = turnNum !== undefined ? turnNum : room.turnNum;
+      if (!room.turns[tn]) room.turns[tn] = {
+        hostMove: null,
+        joinerMove: null,
+        hostItem: null,
+        joinerItem: null,
+        hostQteSuccess: false,
+        joinerQteSuccess: false,
+        resolution: null,
+      };
+
+      if (role === 'host') {
+        room.turns[tn].hostMove = move;
+        room.turns[tn].hostItem = body.item || null;
+        room.turns[tn].hostQteSuccess = !!body.qteSuccess;
+      } else {
+        room.turns[tn].joinerMove = move;
+        room.turns[tn].joinerItem = body.item || null;
+        room.turns[tn].joinerQteSuccess = !!body.qteSuccess;
+      }
+
+      // Track latest turn number
+      if (tn > room.turnNum) room.turnNum = tn;
+
+      // If both moves are in for this turn, return both
+      const turn = room.turns[tn];
+      if (turn.hostMove && turn.joinerMove) {
+        if (turn.resolution) {
+          return json(res, 200, {
+            status: 'resolved',
+            hostMove: turn.hostMove,
+            joinerMove: turn.joinerMove,
+            hostItem: turn.hostItem,
+            joinerItem: turn.joinerItem,
+            hostQteSuccess: !!turn.hostQteSuccess,
+            joinerQteSuccess: !!turn.joinerQteSuccess,
+            resolution: turn.resolution,
+            turnNum: tn,
+          });
+        }
+        return json(res, 200, {
+          status: 'ready',
+          hostMove: turn.hostMove,
+          joinerMove: turn.joinerMove,
+          hostItem: turn.hostItem,
+          joinerItem: turn.joinerItem,
+          hostQteSuccess: !!turn.hostQteSuccess,
+          joinerQteSuccess: !!turn.joinerQteSuccess,
+          turnNum: tn,
+        });
+      }
+      return json(res, 200, { status: 'waiting', turnNum: tn });
+    }
+
+    // POST /rooms/:code/turn/resolve — host publishes the authoritative turn result
+    const turnResolveMatch = method === 'POST' && path.match(/^\/rooms\/([A-Za-z0-9-]+)\/turn\/resolve$/);
+    if (turnResolveMatch) {
+      const normalized = normalizeCode(turnResolveMatch[1]);
+      const room = rooms.get(normalized);
+      if (!room) return error(res, 404, 'Room not found or expired.');
+      if (room.endedAt) return json(res, 200, { status: 'ended' });
+
+      room.createdAt = Date.now();
+
+      const body = JSON.parse(await readBody(req));
+      if (body.role !== 'host') return error(res, 403, 'Only the host can resolve turns.');
+
+      const tn = body.turnNum !== undefined ? body.turnNum : room.turnNum;
+      if (!room.turns) room.turns = {};
+      if (!room.turns[tn]) room.turns[tn] = {
+        hostMove: null,
+        joinerMove: null,
+        hostItem: null,
+        joinerItem: null,
+        hostQteSuccess: false,
+        joinerQteSuccess: false,
+        resolution: null,
+      };
+
+      const turn = room.turns[tn];
+      if (!turn.hostMove || !turn.joinerMove) {
+        return error(res, 409, 'Both moves must be submitted before resolving the turn.');
+      }
+
+      turn.resolution = body.resolution || null;
+      return json(res, 200, {
+        status: 'resolved',
+        hostMove: turn.hostMove,
+        joinerMove: turn.joinerMove,
+        hostItem: turn.hostItem,
+        joinerItem: turn.joinerItem,
+        hostQteSuccess: !!turn.hostQteSuccess,
+        joinerQteSuccess: !!turn.joinerQteSuccess,
+        resolution: turn.resolution,
+        turnNum: tn,
+      });
+    }
+
+    // GET /rooms/:code/turn?t=N — poll for turn resolution (READ-ONLY, never clears)
+    const turnGetMatch = method === 'GET' && path.match(/^\/rooms\/([A-Za-z0-9-]+)\/turn$/);
+    if (turnGetMatch) {
+      const normalized = normalizeCode(turnGetMatch[1]);
+      const room = rooms.get(normalized);
+      if (!room) return error(res, 404, 'Room not found or expired.');
+      if (room.endedAt) return json(res, 200, { status: 'ended' });
+
+      // Keep room alive during active battle
+      room.createdAt = Date.now();
+
+      // Check which turn is being asked about
+      const askTurn = url.searchParams.get('t');
+      const tn = askTurn !== null ? parseInt(askTurn, 10) : room.turnNum;
+
+      if (!room.turns) room.turns = {};
+      const turn = room.turns[tn];
+
+      if (turn && turn.hostMove && turn.joinerMove) {
+        if (turn.resolution) {
+          return json(res, 200, {
+            status: 'resolved',
+            hostMove: turn.hostMove,
+            joinerMove: turn.joinerMove,
+            hostItem: turn.hostItem,
+            joinerItem: turn.joinerItem,
+            hostQteSuccess: !!turn.hostQteSuccess,
+            joinerQteSuccess: !!turn.joinerQteSuccess,
+            resolution: turn.resolution,
+            turnNum: tn,
+          });
+        }
+        return json(res, 200, {
+          status: 'ready',
+          hostMove: turn.hostMove,
+          joinerMove: turn.joinerMove,
+          hostItem: turn.hostItem,
+          joinerItem: turn.joinerItem,
+          hostQteSuccess: !!turn.hostQteSuccess,
+          joinerQteSuccess: !!turn.joinerQteSuccess,
+          turnNum: tn,
+        });
+      }
+      return json(res, 200, { status: 'waiting', turnNum: tn });
+    }
+
+    // POST /rooms/:code/end — signal battle is over, clean up room
+    const endMatch = method === 'POST' && path.match(/^\/rooms\/([A-Za-z0-9-]+)\/end$/);
+    if (endMatch) {
+      const normalized = normalizeCode(endMatch[1]);
+      const room = rooms.get(normalized);
+      if (room) {
+        room.endedAt = Date.now();
+        room.createdAt = Date.now();
+      }
+      return json(res, 200, { status: 'ok' });
+    }
+
     // 404
     error(res, 404, 'Not found.');
   } catch (err) {
@@ -198,6 +382,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`WorkstationOff Relay listening on port ${PORT}`);
+  console.log(`Kernelmon Relay listening on port ${PORT}`);
   console.log(`Max rooms: ${ROOM_LIMIT} | TTL: ${ROOM_TTL / 1000}s | Rate: ${RATE_LIMIT}/min`);
 });

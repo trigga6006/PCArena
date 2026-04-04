@@ -7,7 +7,7 @@ const https = require('node:https');
 const DEFAULT_RELAY_URL = 'https://wso-relay.fly.dev';
 
 const REQUEST_TIMEOUT = 10_000;
-const POLL_INTERVAL = 2_000;
+const POLL_INTERVAL = 500;
 const POLL_TIMEOUT = 15 * 60_000; // 15 min max wait
 
 // ─── HTTP helper ───
@@ -75,12 +75,12 @@ async function hostOnline(myFighter, relayUrl = DEFAULT_RELAY_URL) {
 
   console.log('');
   console.log('\x1b[38;2;130;220;235m  ╭─────────────────────────────────────╮\x1b[0m');
-  console.log('\x1b[38;2;130;220;235m  │   WORKSTATION OFF — Online Battle   │\x1b[0m');
+  console.log('\x1b[38;2;130;220;235m  │   KERNELMON — Online Battle           │\x1b[0m');
   console.log('\x1b[38;2;130;220;235m  │                                     │\x1b[0m');
   console.log(`\x1b[38;2;130;220;235m  │   Room: \x1b[1m${code}\x1b[22m                     │\x1b[0m`);
   console.log('\x1b[38;2;130;220;235m  │                                     │\x1b[0m');
   console.log('\x1b[38;2;100;100;130m  │   Share this code with opponent:     │\x1b[0m');
-  console.log(`\x1b[38;2;100;100;130m  │   wso join ${code}                │\x1b[0m`);
+  console.log(`\x1b[38;2;100;100;130m  │   kmon join ${code}                │\x1b[0m`);
   console.log('\x1b[38;2;130;220;235m  ╰─────────────────────────────────────╯\x1b[0m');
   console.log('');
   console.log('\x1b[38;2;100;100;130m  Waiting for opponent...\x1b[0m');
@@ -95,7 +95,11 @@ async function hostOnline(myFighter, relayUrl = DEFAULT_RELAY_URL) {
         return { opponent: result.fighter, roomCode: code, matchSeed: result.matchSeed || matchSeed };
       }
     } catch (err) {
-      // Transient error — keep polling
+      // Rate limited — back off and retry
+      if (err.message.includes('Rate limit') || err.message.includes('429')) {
+        await sleep(2000);
+      }
+      // Only throw if we're truly at the end of the timeout
       if (Date.now() - start > POLL_TIMEOUT - POLL_INTERVAL) throw err;
     }
   }

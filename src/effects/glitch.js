@@ -19,6 +19,7 @@ class GlitchEffect {
   constructor(rng) {
     this.rng = rng;
     this.active = [];
+    this.exclusionZone = null; // { x, y, w, h }
   }
 
   // Trigger a code-burst at a position
@@ -79,15 +80,21 @@ class GlitchEffect {
       f.life--;
       return f.life > 0;
     });
+    // Cap fragment count to prevent accumulation stutter
+    if (this.active.length > 30) {
+      this.active = this.active.slice(-30);
+    }
   }
 
   draw(screen) {
+    const ez = this.exclusionZone;
     for (const frag of this.active) {
       const alpha = frag.life / frag.maxLife;
-      // Fade out: use dimmer color as life decreases
       const fg = alpha > 0.5 ? frag.color : colors.dimmer;
       const x = Math.round(frag.x);
       const y = Math.round(frag.y);
+      // Skip if fragment overlaps exclusion zone
+      if (ez && x + frag.text.length > ez.x && x < ez.x + ez.w && y >= ez.y && y < ez.y + ez.h) continue;
       screen.text(x, y, frag.text, fg, null, alpha > 0.7);
     }
   }
@@ -97,6 +104,7 @@ class GlitchEffect {
 class FloatingText {
   constructor() {
     this.items = [];
+    this.exclusionZone = null; // { x, y, w, h }
   }
 
   add(x, y, text, color, duration = 15) {
@@ -113,11 +121,15 @@ class FloatingText {
   }
 
   draw(screen) {
+    const ez = this.exclusionZone;
     for (const item of this.items) {
       const y = Math.round(item.y);
+      const x = Math.round(item.x);
+      // Skip if text overlaps exclusion zone
+      if (ez && x + item.text.length > ez.x && x < ez.x + ez.w && y >= ez.y && y < ez.y + ez.h) continue;
       const alpha = item.life / item.maxLife;
       const fg = alpha > 0.3 ? item.color : colors.dimmer;
-      screen.text(Math.round(item.x), y, item.text, fg, null, alpha > 0.6);
+      screen.text(x, y, item.text, fg, null, alpha > 0.6);
     }
   }
 }

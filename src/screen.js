@@ -1,5 +1,5 @@
-// Flicker-free terminal screen buffer
-// Uses explicit cursor positioning per row to avoid scroll issues
+// Flicker-free terminal screen buffer with segment-level diff rendering
+// Only outputs the specific cells that changed — not entire rows
 
 const { ESC, RESET } = require('./palette');
 
@@ -9,39 +9,18 @@ const CURSOR_HIDE = `${ESC}?25l`;
 const CURSOR_SHOW = `${ESC}?25h`;
 const CLEAR_SCREEN = `${ESC}2J`;
 
-class Cell {
-  constructor() {
-    this.char = ' ';
-    this.fg = null;
-    this.bg = null;
-    this.bold = false;
-  }
-
-  set(char, fg = null, bg = null, bold = false) {
-    this.char = char;
-    this.fg = fg;
-    this.bg = bg;
-    this.bold = bold;
-  }
-
-  clear() {
-    this.char = ' ';
-    this.fg = null;
-    this.bg = null;
-    this.bold = false;
-  }
-}
-
 class Screen {
   constructor() {
-    // Cap dimensions to reasonable bounds for layout
     this.width = Math.min(process.stdout.columns || 120, 200);
     this.height = Math.min(process.stdout.rows || 30, 50);
-    // Enforce minimum so layout doesn't break
     if (this.width < 60) this.width = 60;
     if (this.height < 20) this.height = 20;
+
     this.buffer = this._createBuffer();
+    this.prev = this._createBuffer();
     this.active = false;
+    this._firstRender = true;
+    this._writePending = false;
   }
 
   _createBuffer() {
@@ -49,7 +28,7 @@ class Screen {
     for (let y = 0; y < this.height; y++) {
       const row = [];
       for (let x = 0; x < this.width; x++) {
-        row.push(new Cell());
+        row.push({ char: ' ', fg: null, bg: null, bold: false });
       }
       buf.push(row);
     }
@@ -58,9 +37,8 @@ class Screen {
 
   enter() {
     this.active = true;
-    // Switch to alt screen, hide cursor, clear everything
+    this._firstRender = true;
     process.stdout.write(ALT_SCREEN_ON + CURSOR_HIDE + CLEAR_SCREEN);
-    // Handle clean exit
     const cleanup = () => this.exit();
     process.on('SIGINT', cleanup);
     process.on('SIGTERM', cleanup);
@@ -77,33 +55,63 @@ class Screen {
     }
   }
 
+  // Clean up handlers but STAY in alt screen — for seamless handoff to another Screen
+  handoff() {
+    if (!this.active) return;
+    this.active = false;
+    // Clear screen for the next Screen to take over cleanly
+    process.stdout.write(CLEAR_SCREEN);
+    if (this._cleanup) {
+      process.removeListener('SIGINT', this._cleanup);
+      process.removeListener('SIGTERM', this._cleanup);
+    }
+  }
+
   clear() {
     for (let y = 0; y < this.height; y++) {
+      const row = this.buffer[y];
       for (let x = 0; x < this.width; x++) {
-        this.buffer[y][x].clear();
+        const c = row[x];
+        c.char = ' '; c.fg = null; c.bg = null; c.bold = false;
       }
     }
   }
 
-  set(x, y, char, fg = null, bg = null, bold = false) {
+  // Force next render() to redraw every cell (clears diff state)
+  resetDiff() {
+    this._firstRender = true;
+    for (let y = 0; y < this.height; y++) {
+      const prow = this.prev[y];
+      for (let x = 0; x < this.width; x++) {
+        const p = prow[x];
+        p.char = '\x00'; p.fg = '\x00'; p.bg = null; p.bold = false;
+      }
+    }
+  }
+
+  set(x, y, char, fg, bg, bold) {
     x = Math.floor(x);
     y = Math.floor(y);
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return;
-    this.buffer[y][x].set(char, fg, bg, bold);
+    const c = this.buffer[y][x];
+    c.char = char;
+    c.fg = fg || null;
+    c.bg = bg || null;
+    c.bold = bold || false;
   }
 
-  text(x, y, str, fg = null, bg = null, bold = false) {
+  text(x, y, str, fg, bg, bold) {
     for (let i = 0; i < str.length; i++) {
       this.set(x + i, y, str[i], fg, bg, bold);
     }
   }
 
-  centerText(y, str, fg = null, bg = null, bold = false) {
+  centerText(y, str, fg, bg, bold) {
     const x = Math.floor((this.width - str.length) / 2);
     this.text(x, y, str, fg, bg, bold);
   }
 
-  box(x, y, w, h, fg = null, bg = null) {
+  box(x, y, w, h, fg, bg) {
     this.set(x, y, '╭', fg, bg);
     this.set(x + w - 1, y, '╮', fg, bg);
     this.set(x, y + h - 1, '╰', fg, bg);
@@ -118,13 +126,13 @@ class Screen {
     }
   }
 
-  hline(x, y, length, char = '─', fg = null) {
+  hline(x, y, length, char, fg) {
     for (let i = 0; i < length; i++) {
-      this.set(x + i, y, char, fg);
+      this.set(x + i, y, char || '─', fg);
     }
   }
 
-  bar(x, y, width, ratio, fgFull, fgEmpty = null) {
+  bar(x, y, width, ratio, fgFull, fgEmpty) {
     const filled = Math.round(width * Math.max(0, Math.min(1, ratio)));
     for (let i = 0; i < width; i++) {
       if (i < filled) {
@@ -135,35 +143,91 @@ class Screen {
     }
   }
 
-  // Render using explicit cursor positioning per row — no scroll issues
+  // Segment-level diff render: only output the specific cells that changed.
+  // Unchanged cells are skipped entirely — no cursor move, no output.
+  // Nearby changed cells are merged into segments to avoid excessive cursor jumps.
   render() {
-    let out = '';
-    for (let y = 0; y < this.height; y++) {
-      // Move cursor to start of this row (1-indexed)
-      out += `${ESC}${y + 1};1H`;
-      let lastFg = null;
-      let lastBg = null;
-      let lastBold = false;
-      for (let x = 0; x < this.width; x++) {
-        const cell = this.buffer[y][x];
-        const needFg = cell.fg !== lastFg;
-        const needBg = cell.bg !== lastBg;
-        const needBold = cell.bold !== lastBold;
+    if (this._writePending) return;
 
-        if (needFg || needBg || needBold) {
-          out += RESET;
-          if (cell.bg) out += cell.bg;
-          if (cell.fg) out += cell.fg;
-          if (cell.bold) out += `${ESC}1m`;
-          lastFg = cell.fg;
-          lastBg = cell.bg;
-          lastBold = cell.bold;
+    const parts = [];
+    const full = this._firstRender;
+    const MERGE_GAP = 4; // merge changed segments separated by ≤4 unchanged cells
+
+    for (let y = 0; y < this.height; y++) {
+      const row = this.buffer[y];
+      const prow = this.prev[y];
+
+      let segStart = -1; // start of current changed segment
+      let segEnd = -1;   // end of current changed segment
+
+      for (let x = 0; x <= this.width; x++) {
+        let changed = false;
+        if (x < this.width) {
+          const c = row[x]; const p = prow[x];
+          changed = full || c.char !== p.char || c.fg !== p.fg || c.bg !== p.bg || c.bold !== p.bold;
         }
-        out += cell.char;
+
+        if (changed) {
+          if (segStart === -1) {
+            segStart = x;
+            segEnd = x;
+          } else if (x - segEnd <= MERGE_GAP) {
+            segEnd = x; // close enough — merge into current segment
+          } else {
+            // Gap too large — flush current segment, start new one
+            this._emitSegment(parts, y, row, prow, segStart, segEnd);
+            segStart = x;
+            segEnd = x;
+          }
+        }
       }
-      out += RESET;
+
+      // Flush final segment for this row
+      if (segStart !== -1) {
+        this._emitSegment(parts, y, row, prow, segStart, segEnd);
+      }
     }
-    process.stdout.write(out);
+
+    if (parts.length > 0) {
+      const ok = process.stdout.write(parts.join(''));
+      if (!ok) {
+        this._writePending = true;
+        process.stdout.once('drain', () => { this._writePending = false; });
+      }
+    }
+
+    this._firstRender = false;
+  }
+
+  // Output a segment of cells from startX to endX (inclusive) on row y
+  _emitSegment(parts, y, row, prow, startX, endX) {
+    parts.push(`${ESC}${y + 1};${startX + 1}H`); // position cursor
+    let lastFg = null;
+    let lastBg = null;
+    let lastBold = false;
+
+    for (let x = startX; x <= endX; x++) {
+      const c = row[x];
+      const needFg = c.fg !== lastFg;
+      const needBg = c.bg !== lastBg;
+      const needBold = c.bold !== lastBold;
+
+      if (needFg || needBg || needBold) {
+        parts.push(RESET);
+        if (c.bg) parts.push(c.bg);
+        if (c.fg) parts.push(c.fg);
+        if (c.bold) parts.push(`${ESC}1m`);
+        lastFg = c.fg;
+        lastBg = c.bg;
+        lastBold = c.bold;
+      }
+      parts.push(c.char);
+
+      // Snapshot this cell
+      const p = prow[x];
+      p.char = c.char; p.fg = c.fg; p.bg = c.bg; p.bold = c.bold;
+    }
+    parts.push(RESET);
   }
 }
 

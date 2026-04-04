@@ -5,11 +5,12 @@
 
 const { Screen } = require('./screen');
 const { colors, hpColor, RESET, BOLD, rgb } = require('./palette');
-const { MatrixRain } = require('./effects/matrix');
+const { MatrixRain, CodeSparkle } = require('./effects/matrix');
 const { GlitchEffect, FloatingText } = require('./effects/glitch');
 const { ProjectileManager } = require('./effects/projectile');
 const { createRNG } = require('./rng');
 const { getSprite } = require('./sprites');
+const { toneColor } = require('./benchmark');
 
 const FPS = 20;
 const FRAME_MS = 1000 / FPS;
@@ -23,15 +24,29 @@ async function renderBattle(fighterA, fighterB, events) {
   for (const f of [fighterA, fighterB]) {
     if (!f.sprite || typeof f.sprite.back?.draw !== 'function') {
       f.sprite = f.specs ? getSprite(f.specs) : getSprite({ gpu: { model: '', vramMB: 0, vendor: '' }, cpu: { brand: '' }, storage: { type: 'SSD' } });
+      // Re-apply skin override if present
+      if (f.skinId) {
+        try {
+          const { applySkinOverride } = require('./skins');
+          f.sprite = applySkinOverride(f.sprite, f.skinId);
+        } catch {}
+      }
     }
   }
 
   const screen = new Screen();
   const rng = createRNG(99);
-  const matrix = new MatrixRain(screen.width, screen.height, rng);
+  const matrix = new MatrixRain(screen.width, screen.height, rng); // used only for intro
+  const sparkle = new CodeSparkle(screen.width, screen.height, rng, 20);
   const glitch = new GlitchEffect(rng);
   const floats = new FloatingText();
   const projectiles = new ProjectileManager(rng, screen.width, screen.height);
+
+  // Tame the intro rain
+  for (const col of matrix.columns) {
+    col.active = rng.chance(0.20);
+    col.speed = rng.float(0.2, 0.7);
+  }
 
   const w = screen.width;
   const h = screen.height;
@@ -49,14 +64,15 @@ async function renderBattle(fighterA, fighterB, events) {
   const plyCenterX = plyX + 7;
   const plyCenterY = plyY + 5;
 
-  // Health bar positions
-  const oppBarX = oppX - 8;
+  // Health bar positions — centered, stacked (matches turn-based layout)
+  const barW = Math.min(24, Math.floor(w * 0.2));
+  const oppBarX = Math.floor(w * 0.33);
   const oppBarY = oppY;
-  const oppBarW = Math.min(24, Math.floor(w * 0.2));
+  const oppBarW = barW;
 
-  const plyBarX = Math.floor(w * 0.5);
+  const plyBarX = Math.floor(w * 0.28);
   const plyBarY = plyY + 8;
-  const plyBarW = Math.min(28, Math.floor(w * 0.25));
+  const plyBarW = barW;
 
   // Battle log
   const logY = h - 7;
@@ -130,7 +146,18 @@ async function renderBattle(fighterA, fighterB, events) {
       if (p2HitFrames > 0) p2HitFrames--;
 
       // Update effects
-      matrix.update();
+      if (phase === 'intro') {
+        matrix.update();
+      } else {
+        sparkle.exclusionZones = [
+          { x: plyX - 1, y: plyY - 1, w: 18, h: 14 },
+          { x: oppX - 1, y: oppY - 1, w: 16, h: 12 },
+          { x: 1, y: oppBarY, w: oppBarW + 12, h: 3 },
+          { x: plyBarX - 1, y: plyBarY - 1, w: plyBarW + 12, h: 5 },
+          { x: 0, y: logY - 1, w, h: logHeight + 2 },
+        ];
+        sparkle.update();
+      }
       glitch.update();
       floats.update();
       projectiles.update();
@@ -138,14 +165,13 @@ async function renderBattle(fighterA, fighterB, events) {
       // ─── DRAW ───
       screen.clear();
 
-      // BG: matrix rain (always)
-      matrix.draw(screen);
-
       if (phase === 'intro') {
-        // Intro: ONLY draw matrix + intro overlay — no fighters, no UI
+        // Intro: matrix rain + intro overlay — no fighters, no UI
+        matrix.draw(screen);
         drawIntro(screen, elapsed);
       } else {
-        // Battle / Outro: draw the full scene
+        // Battle / Outro: sparkle BG + full scene
+        sparkle.draw(screen);
         drawGround(screen);
         drawFighterSprites(screen);
         drawUI(screen, elapsed);
@@ -202,6 +228,11 @@ async function renderBattle(fighterA, fighterB, events) {
       logLine += ` [${event.damage}]`;
       addLog(logLine, event.isCrit ? colors.crit : (isAAttacking ? colors.p1 : colors.p2));
       addLog(`  ${event.flavor}`, colors.dimmer);
+      if (event.resisted) addLog('  Thermal guard resisted the debuff', colors.mint);
+
+    } else if (event.type === 'condition') {
+      const whoLabel = event.who === 'a' ? fighterA.name : fighterB.name;
+      addLog(`${whoLabel.slice(0, 14)} ${event.label}: ${event.desc}`, toneColor(event.tone));
 
     } else if (event.type === 'dodge') {
       const whoLabel = event.who === 'a' ? fighterA.name : fighterB.name;
@@ -323,7 +354,7 @@ async function renderBattle(fighterA, fighterB, events) {
 
   function drawUI(screen, elapsed) {
     // Title
-    const title = ' W O R K S T A T I O N   O F F ';
+    const title = ' K E R N E L M O N';
     screen.centerText(0, '─'.repeat(w), colors.dimmer);
     screen.centerText(0, title, colors.cyan, null, true);
 
@@ -332,22 +363,25 @@ async function renderBattle(fighterA, fighterB, events) {
     const timerStr = `${Math.floor(timeLeft / 60)}:${String(timeLeft % 60).padStart(2, '0')}`;
     screen.text(w - 8, 0, timerStr, colors.dim);
 
-    // ─── Opponent info (top-left, Pokemon-style — away from sprite) ───
-    const oppNameX = 3;
+    // ─── Opponent info (centered, above player — matches turn-based layout) ───
     const oppInfoY = 2;
-    screen.text(oppNameX, oppInfoY, fighterB.name.slice(0, 24), colors.p2, null, true);
+    screen.text(oppBarX, oppInfoY, fighterB.name.slice(0, 24), colors.p2, null, true);
+    const oppArch = fighterB.archetype?.name || '';
+    if (oppArch) screen.text(oppBarX + Math.min(fighterB.name.length, 24) + 1, oppInfoY, oppArch, colors.dimmer);
     // HP bar
     const ratioB = Math.max(0, hpB / fighterB.stats.maxHp);
-    screen.bar(oppNameX, oppInfoY + 1, oppBarW, ratioB, hpColor(ratioB), colors.dimmer);
+    screen.bar(oppBarX, oppInfoY + 1, oppBarW, ratioB, hpColor(ratioB), colors.dimmer);
     const hpTextB = ` ${Math.round(Math.max(0, hpB))}/${fighterB.stats.maxHp}`;
-    screen.text(oppNameX + oppBarW, oppInfoY + 1, hpTextB, hpColor(ratioB));
+    screen.text(oppBarX + oppBarW, oppInfoY + 1, hpTextB, hpColor(ratioB));
     // Mini stats
     const bst = fighterB.stats;
-    screen.text(oppNameX, oppInfoY + 2, `STR:${bst.str} MAG:${bst.mag} SPD:${bst.spd}`, colors.dimmer);
+    screen.text(oppBarX, oppInfoY + 2, `STR:${bst.str} MAG:${bst.mag} SPD:${bst.spd}`, colors.dimmer);
 
-    // ─── Player info (bottom-right, near player's side) ───
+    // ─── Player info (centered, below opponent — matches turn-based layout) ───
     const plyInfoY = plyBarY;
     screen.text(plyBarX, plyInfoY, fighterA.name.slice(0, 24), colors.p1, null, true);
+    const plyArch = fighterA.archetype?.name || '';
+    if (plyArch) screen.text(plyBarX + Math.min(fighterA.name.length, 24) + 1, plyInfoY, plyArch, colors.dimmer);
     // HP bar
     const ratioA = Math.max(0, hpA / fighterA.stats.maxHp);
     screen.bar(plyBarX, plyInfoY + 1, plyBarW, ratioA, hpColor(ratioA), colors.dimmer);
@@ -364,7 +398,7 @@ async function renderBattle(fighterA, fighterB, events) {
     // Log box at bottom
     screen.hline(1, logY - 1, w - 2, '─', colors.dimmer);
     screen.text(3, logY - 1, ' BATTLE LOG ', colors.dim);
-    screen.text(w - 22, h - 1, '─ workstation-off ─', colors.dimmer);
+    screen.text(w - 22, h - 1, '─ kernelmon ─', colors.dimmer);
 
     for (let i = 0; i < battleLog.length && i < logHeight; i++) {
       const entry = battleLog[i];
@@ -388,7 +422,7 @@ async function renderBattle(fighterA, fighterB, events) {
     }
 
     // Title always visible
-    const title = ' W O R K S T A T I O N   O F F ';
+    const title = ' K E R N E L M O N';
     screen.centerText(0, '─'.repeat(w), colors.dimmer);
     screen.centerText(0, title, colors.cyan, null, true);
 

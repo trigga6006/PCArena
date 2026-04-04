@@ -278,7 +278,7 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         glitch.scatter(w / 2, h / 2, w, h, 20, 8);
         break;
       }
-      case 'special_black_hole': {
+      case 'special_sinkhole': {
         const dmg = Math.round(opponent.maxHp * item.value);
         opponent.hp = Math.max(0, opponent.hp - dmg);
         opponent.stunned = true;
@@ -289,14 +289,14 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         opponent._boosts.push({ stat: 'def', amount: -defLoss, turns: 3 });
         if (dOpp === 'a') targetHpA = opponent.hp;
         else targetHpB = opponent.hp;
-        addLog(`  ● BLACK HOLE activated!`, rgb(200, 120, 255));
+        addLog(`  ● SINKHOLE opened!`, rgb(200, 120, 255));
         addLog(`  ${dmg} damage + stun + DEF -${defLoss}`, rgb(180, 100, 240));
         floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
-        floats.add(oppCX - 3, oppCY - 2, 'SINGULARITY', rgb(200, 120, 255), 25);
+        floats.add(oppCX - 3, oppCY - 2, 'SINKHOLE', rgb(200, 120, 255), 25);
         specialEffect = new BlackHoleEffect(oppCX, oppCY, w, h, frameCount);
         break;
       }
-      case 'special_maelstrom': {
+      case 'special_fork_bomb': {
         const dmg = Math.round(opponent.maxHp * item.value);
         opponent.hp = Math.max(0, opponent.hp - dmg);
         // STR down 25% for 3 turns
@@ -310,27 +310,27 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         opponent._boosts.push({ stat: 'spd', amount: -spdLoss, turns: 3 });
         if (dOpp === 'a') targetHpA = opponent.hp;
         else targetHpB = opponent.hp;
-        addLog(`  ◎ MAELSTROM unleashed!`, rgb(100, 240, 255));
+        addLog(`  ◎ FORK BOMB deployed!`, rgb(100, 240, 255));
         addLog(`  ${dmg} dmg + STR -${strLoss} + SPD -${spdLoss}`, rgb(140, 220, 255));
         floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
-        floats.add(oppCX - 3, oppCY - 2, 'MAELSTROM', rgb(100, 240, 255), 25);
+        floats.add(oppCX - 3, oppCY - 2, 'FORK BOMB', rgb(100, 240, 255), 25);
         specialEffect = new MaelstromEffect(oppCX, oppCY, w, h, frameCount);
         break;
       }
-      case 'special_ion_cannon': {
+      case 'special_kill_signal': {
         const dmg = Math.round(opponent.maxHp * item.value);
         opponent.hp = Math.max(0, opponent.hp - dmg);
         opponent.stunned = true;
         if (dOpp === 'a') targetHpA = opponent.hp;
         else targetHpB = opponent.hp;
-        addLog(`  ▼ ION CANNON locked on!`, rgb(120, 180, 255));
+        addLog(`  ▼ KILL -9 sent!`, rgb(120, 180, 255));
         addLog(`  ${dmg} damage + stun`, rgb(200, 230, 255));
         floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
-        floats.add(oppCX - 3, oppCY - 2, 'ION STRIKE', rgb(180, 220, 255), 25);
+        floats.add(oppCX - 3, oppCY - 2, 'KILL -9', rgb(180, 220, 255), 25);
         specialEffect = new IonCannonEffect(oppCX, oppCY, w, h, frameCount);
         break;
       }
-      case 'special_quantum_rift': {
+      case 'special_kernel_panic': {
         const dmg = Math.round(opponent.maxHp * item.value);
         opponent.hp = Math.max(0, opponent.hp - dmg);
         // MAG down 25% for 3 turns
@@ -340,14 +340,14 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         opponent._boosts.push({ stat: 'mag', amount: -magLoss, turns: 3 });
         if (dOpp === 'a') targetHpA = opponent.hp;
         else targetHpB = opponent.hp;
-        addLog(`  ◈ QUANTUM RIFT torn open!`, rgb(255, 100, 255));
+        addLog(`  ◈ KERNEL PANIC triggered!`, rgb(255, 100, 255));
         addLog(`  ${dmg} damage + MAG -${magLoss}`, rgb(200, 150, 255));
         floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
-        floats.add(oppCX - 3, oppCY - 2, 'RIFT', rgb(255, 100, 255), 25);
+        floats.add(oppCX - 3, oppCY - 2, 'PANIC', rgb(255, 100, 255), 25);
         specialEffect = new QuantumRiftEffect(oppCX, oppCY, w, h, frameCount);
         break;
       }
-      case 'special_supernova': {
+      case 'special_meltdown': {
         const dmg = Math.round(opponent.maxHp * item.value);
         opponent.hp = Math.max(0, opponent.hp - dmg);
         // All stats down 15% for 2 turns
@@ -359,10 +359,10 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         }
         if (dOpp === 'a') targetHpA = opponent.hp;
         else targetHpB = opponent.hp;
-        addLog(`  ✹ SUPERNOVA detonated!`, rgb(255, 240, 120));
+        addLog(`  ✹ MELTDOWN initiated!`, rgb(255, 240, 120));
         addLog(`  ${dmg} dmg + all stats -15%`, rgb(255, 200, 80));
         floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 25);
-        floats.add(oppCX - 3, oppCY - 2, 'SUPERNOVA', rgb(255, 240, 120), 30);
+        floats.add(oppCX - 3, oppCY - 2, 'MELTDOWN', rgb(255, 240, 120), 30);
         specialEffect = new SupernovaEffect(oppCX, oppCY, w, h, frameCount);
         break;
       }

@@ -142,48 +142,48 @@ const ITEMS = {
   },
 
   // ── Special Attacks ──
-  black_hole: {
-    name: 'Black Hole',
-    desc: 'Singularity — 25% HP + stun + DEF down',
+  sinkhole: {
+    name: 'Sinkhole',
+    desc: 'DNS void — 25% HP + stun + DEF down',
     icon: '●',
     rarity: 'epic',
-    effect: 'special_black_hole',
+    effect: 'special_sinkhole',
     value: 0.25,
     dropRate: 0.03,
   },
-  maelstrom: {
-    name: 'Maelstrom',
-    desc: 'Data storm — 35% HP + STR/SPD down',
+  fork_bomb: {
+    name: 'Fork Bomb',
+    desc: 'Process storm — 35% HP + STR/SPD down',
     icon: '◎',
     rarity: 'legendary',
-    effect: 'special_maelstrom',
+    effect: 'special_fork_bomb',
     value: 0.35,
     dropRate: 0.01,
   },
-  ion_cannon: {
-    name: 'Ion Cannon',
-    desc: 'Orbital strike — 20% HP + stun',
+  kill_signal: {
+    name: 'Kill Signal',
+    desc: 'kill -9 — 20% HP + stun',
     icon: '▼',
     rarity: 'rare',
-    effect: 'special_ion_cannon',
+    effect: 'special_kill_signal',
     value: 0.20,
     dropRate: 0.06,
   },
-  quantum_rift: {
-    name: 'Quantum Rift',
-    desc: 'Reality tear — 22% HP + MAG down',
+  kernel_panic: {
+    name: 'Kernel Panic',
+    desc: 'System crash — 22% HP + MAG down',
     icon: '◈',
     rarity: 'epic',
-    effect: 'special_quantum_rift',
+    effect: 'special_kernel_panic',
     value: 0.22,
     dropRate: 0.03,
   },
-  supernova: {
-    name: 'Supernova',
-    desc: 'Star death — 40% HP + all stats down',
+  meltdown: {
+    name: 'Meltdown',
+    desc: 'Thermal runaway — 40% HP + all stats down',
     icon: '✹',
     rarity: 'legendary',
-    effect: 'special_supernova',
+    effect: 'special_meltdown',
     value: 0.40,
     dropRate: 0.008,
   },

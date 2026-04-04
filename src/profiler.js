@@ -1,11 +1,81 @@
 // Profile PC hardware and map to fighter stats
 const si = require('systeminformation');
 const nodeos = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
 const { execSync } = require('node:child_process');
 
 let cachedSpecsPromise = null;
 
-// Fallback: query GPU via PowerShell/WMIC on Windows
+const WSO_DIR = path.join(__dirname, '..', '.kernelmon');
+const HARDWARE_FILE = path.join(WSO_DIR, 'hardware.json');
+
+// ─── Persistent scan cache ───
+
+function loadCachedScan() {
+  try {
+    return JSON.parse(fs.readFileSync(HARDWARE_FILE, 'utf8'));
+  } catch { return null; }
+}
+
+function saveScanToCache(specs) {
+  try {
+    if (!fs.existsSync(WSO_DIR)) fs.mkdirSync(WSO_DIR, { recursive: true });
+    fs.writeFileSync(HARDWARE_FILE, JSON.stringify(specs, null, 2), 'utf8');
+  } catch {}
+}
+
+// Compare two scans — only hardware-relevant fields (ignoring transient data)
+function scansMatch(a, b) {
+  if (!a || !b) return false;
+  try {
+    const pick = (s) => ({
+      cpu: { brand: s.cpu.brand, cores: s.cpu.cores, threads: s.cpu.threads,
+             speed: s.cpu.speed, speedMax: s.cpu.speedMax },
+      gpu: { model: s.gpu.model, vramMB: s.gpu.vramMB, vendor: s.gpu.vendor },
+      ram: { totalGB: s.ram.totalGB },
+      storage: { type: s.storage.type, sizeGB: s.storage.sizeGB },
+      isLaptop: s.isLaptop,
+    });
+    return JSON.stringify(pick(a)) === JSON.stringify(pick(b));
+  } catch { return false; }
+}
+
+// ─── GPU detection helpers ───
+
+function detectVendor(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('nvidia') || n.includes('geforce') || n.includes('rtx') || n.includes('gtx')) return 'NVIDIA';
+  if (n.includes('amd') || n.includes('radeon')) return 'AMD';
+  if (n.includes('intel')) return 'Intel';
+  return '';
+}
+
+function isIntegratedGPU(name) {
+  const n = (name || '').toLowerCase();
+  return !n || n === 'integrated' ||
+    (/\b(uhd|iris|hd graphics|intel.*graphics)\b/i.test(n) &&
+    !/\barc\b/i.test(n));
+}
+
+function isDiscreteGPU(name) {
+  const n = (name || '').toLowerCase();
+  return /geforce|radeon|rtx|gtx|rx\s|arc\s*[ab]?\d/i.test(n);
+}
+
+// Score a GPU entry — higher = more likely the real discrete GPU
+function gpuQualityScore(gpu) {
+  let score = 0;
+  const name = (gpu.model || gpu.Name || '').toLowerCase();
+  const vram = gpu.vramMB || gpu.vram || 0;
+  if (isDiscreteGPU(name)) score += 100;
+  if (isIntegratedGPU(name)) score -= 50;
+  if (vram > 0) score += Math.min(vram / 100, 50); // VRAM as tiebreaker
+  if (/\d{4}/.test(name)) score += 10; // has a model number
+  return score;
+}
+
+// Fallback: query GPU via PowerShell on Windows (model name from driver is authoritative)
 function fallbackGPU() {
   try {
     if (process.platform !== 'win32') return null;
@@ -15,16 +85,27 @@ function fallbackGPU() {
     ).toString().trim();
     let gpus = JSON.parse(raw);
     if (!Array.isArray(gpus)) gpus = [gpus];
-    // Filter to the one with most VRAM
-    gpus.sort((a, b) => (b.AdapterRAM || 0) - (a.AdapterRAM || 0));
+    gpus = gpus.filter(g => g && g.Name);
+
+    // Prefer discrete GPU over integrated
+    gpus.sort((a, b) => {
+      const aDiscrete = isDiscreteGPU(a.Name) ? 1 : 0;
+      const bDiscrete = isDiscreteGPU(b.Name) ? 1 : 0;
+      if (bDiscrete !== aDiscrete) return bDiscrete - aDiscrete;
+      return (b.AdapterRAM || 0) - (a.AdapterRAM || 0);
+    });
+
     const best = gpus[0];
     if (best && best.Name) {
+      // WMI AdapterRAM is a uint32 — overflows at 4GB. Treat 0 or negative as unknown.
+      const rawBytes = best.AdapterRAM || 0;
+      const vramMB = (rawBytes > 0 && rawBytes <= 4294967295)
+        ? Math.round(rawBytes / (1024 * 1024))
+        : 0; // overflow — will use systeminformation VRAM instead
       return {
         model: best.Name,
-        vramMB: Math.round((best.AdapterRAM || 0) / (1024 * 1024)),
-        vendor: best.Name.toLowerCase().includes('nvidia') ? 'NVIDIA' :
-                best.Name.toLowerCase().includes('amd') ? 'AMD' :
-                best.Name.toLowerCase().includes('intel') ? 'Intel' : '',
+        vramMB,
+        vendor: detectVendor(best.Name),
       };
     }
   } catch {}
@@ -130,18 +211,35 @@ async function scanSpecsUncached() {
   if (!cpuInfo.speed) cpuInfo.speed = 1.0;
   if (!cpuInfo.speedMax) cpuInfo.speedMax = cpuInfo.speed;
 
-  // ── GPU: use systeminformation, fallback to PowerShell query ──
-  const gpuControllers = (graphics.controllers || []).slice().sort((a, b) => (b.vram || 0) - (a.vram || 0));
+  // ── GPU: cross-reference systeminformation with PowerShell for best result ──
+  const gpuControllers = (graphics.controllers || []).slice();
+
+  // Score and sort si controllers — prefer discrete GPUs, not just highest VRAM
+  gpuControllers.sort((a, b) => {
+    const aScore = gpuQualityScore({ model: a.model, vramMB: a.vram });
+    const bScore = gpuQualityScore({ model: b.model, vramMB: b.vram });
+    return bScore - aScore;
+  });
   let gpuMain = gpuControllers[0] || {};
 
-  // Check if systeminformation returned junk (no model, or "Integrated" with 0 VRAM)
-  const gpuLooksWrong = !gpuMain.model || gpuMain.model === 'Integrated' ||
-    (gpuMain.model.toLowerCase().includes('intel') && gpuControllers.length <= 1 && !gpuMain.model.toLowerCase().includes('arc'));
+  // Always run the PowerShell fallback on Windows for cross-reference.
+  // WMI model names come directly from the GPU driver and are the most
+  // authoritative source. However WMI's AdapterRAM overflows at 4 GB,
+  // so we prefer systeminformation for VRAM.
+  const gpuFb = fallbackGPU();
+  if (gpuFb) {
+    const siScore = gpuQualityScore({ model: gpuMain.model, vramMB: gpuMain.vram });
+    const fbScore = gpuQualityScore({ model: gpuFb.model, vramMB: gpuFb.vramMB });
 
-  if (gpuLooksWrong) {
-    const fb = fallbackGPU();
-    if (fb && fb.vramMB > (gpuMain.vram || 0)) {
-      gpuMain = { model: fb.model, vram: fb.vramMB, vendor: fb.vendor };
+    if (fbScore > siScore) {
+      // Fallback found a better GPU — use its model name, keep best VRAM
+      const bestVram = Math.max(gpuMain.vram || 0, gpuFb.vramMB || 0);
+      gpuMain = { model: gpuFb.model, vram: bestVram, vendor: gpuFb.vendor };
+    } else if (isDiscreteGPU(gpuFb.model) && isDiscreteGPU(gpuMain.model)) {
+      // Both found discrete GPUs — prefer WMI model name (driver-authoritative),
+      // keep the higher VRAM from either source
+      const bestVram = Math.max(gpuMain.vram || 0, gpuFb.vramMB || 0);
+      gpuMain = { model: gpuFb.model, vram: bestVram, vendor: gpuFb.vendor || gpuMain.vendor };
     }
   }
 
@@ -179,7 +277,19 @@ async function getSpecs(options = {}) {
   const { refresh = false } = options;
 
   if (refresh || !cachedSpecsPromise) {
-    cachedSpecsPromise = scanSpecsUncached().catch((err) => {
+    cachedSpecsPromise = (async () => {
+      const freshScan = await scanSpecsUncached();
+      const cached = loadCachedScan();
+
+      if (cached && scansMatch(cached, freshScan)) {
+        // Hardware unchanged — reuse the cached scan (deterministic stats)
+        return cached;
+      }
+
+      // New or changed hardware — save fresh scan as the new baseline
+      saveScanToCache(freshScan);
+      return freshScan;
+    })().catch((err) => {
       cachedSpecsPromise = null;
       throw err;
     });

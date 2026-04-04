@@ -127,7 +127,11 @@ function printFighter(fighter, color, compact = false) {
   const cpuLabel = (sp.cpu?.brand || 'Unknown').slice(0, 28);
   const cores = sp.cpu?.cores || '?';
   const threads = sp.cpu?.threads || '?';
-  const ghz = sp.cpu?.speedMax ? `${sp.cpu.speedMax}GHz` : '';
+  const ghz = sp.cpu?.speedMax
+    ? (sp.cpu.speed && sp.cpu.speed < sp.cpu.speedMax
+      ? `${sp.cpu.speed}-${sp.cpu.speedMax}GHz`
+      : `${sp.cpu.speedMax}GHz`)
+    : '';
   console.log(`${color}  │  ${dim}CPU  ${bright}${cpuLabel.padEnd(30)}${color}│${RESET}`);
   console.log(`${color}  │  ${dim}     ${cores}C/${threads}T ${ghz.padEnd(10)} ${bright}STR ${bar(s.str)} ${String(s.str).padStart(3)}${color} │${RESET}`);
 

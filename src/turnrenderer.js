@@ -8,6 +8,7 @@ const { colors, hpColor, rgb } = require('./palette');
 const { MatrixRain, CodeSparkle } = require('./effects/matrix');
 const { GlitchEffect, FloatingText } = require('./effects/glitch');
 const { ProjectileManager } = require('./effects/projectile');
+const { BlackHoleEffect, MaelstromEffect } = require('./effects/special');
 const { createRNG } = require('./rng');
 const { getSprite } = require('./sprites');
 const {
@@ -167,6 +168,8 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
   // Item ring effect — expanding green ring around the user
   let itemRing = null; // { cx, cy, startFrame, duration }
+  // Special attack effects — full-screen animations (black hole, maelstrom)
+  let specialEffect = null; // BlackHoleEffect | MaelstromEffect instance
   let frameCount = 0;
   let battleStartTime = Date.now();
   let turnNum = 0;
@@ -273,6 +276,45 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         addLog(`  NUKE! ${dmg} damage + stun`, colors.gold);
         glitch.screenTear(w, 6);
         glitch.scatter(w / 2, h / 2, w, h, 20, 8);
+        break;
+      }
+      case 'special_black_hole': {
+        const dmg = Math.round(opponent.maxHp * item.value);
+        opponent.hp = Math.max(0, opponent.hp - dmg);
+        opponent.stunned = true;
+        // DEF down — reduce by 20%
+        const defLoss = Math.round(opponent.def * 0.20);
+        opponent.def = Math.max(1, opponent.def - defLoss);
+        opponent._boosts = opponent._boosts || [];
+        opponent._boosts.push({ stat: 'def', amount: -defLoss, turns: 3 });
+        if (dOpp === 'a') targetHpA = opponent.hp;
+        else targetHpB = opponent.hp;
+        addLog(`  ● BLACK HOLE activated!`, rgb(200, 120, 255));
+        addLog(`  ${dmg} damage + stun + DEF -${defLoss}`, rgb(180, 100, 240));
+        floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
+        floats.add(oppCX - 3, oppCY - 2, 'SINGULARITY', rgb(200, 120, 255), 25);
+        specialEffect = new BlackHoleEffect(oppCX, oppCY, w, h, frameCount);
+        break;
+      }
+      case 'special_maelstrom': {
+        const dmg = Math.round(opponent.maxHp * item.value);
+        opponent.hp = Math.max(0, opponent.hp - dmg);
+        // STR down 25% for 3 turns
+        const strLoss = Math.round(opponent.str * 0.25);
+        opponent.str = Math.max(1, opponent.str - strLoss);
+        opponent._boosts = opponent._boosts || [];
+        opponent._boosts.push({ stat: 'str', amount: -strLoss, turns: 3 });
+        // SPD down 25% for 3 turns
+        const spdLoss = Math.round(opponent.spd * 0.25);
+        opponent.spd = Math.max(1, opponent.spd - spdLoss);
+        opponent._boosts.push({ stat: 'spd', amount: -spdLoss, turns: 3 });
+        if (dOpp === 'a') targetHpA = opponent.hp;
+        else targetHpB = opponent.hp;
+        addLog(`  ◎ MAELSTROM unleashed!`, rgb(100, 240, 255));
+        addLog(`  ${dmg} dmg + STR -${strLoss} + SPD -${spdLoss}`, rgb(140, 220, 255));
+        floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
+        floats.add(oppCX - 3, oppCY - 2, 'MAELSTROM', rgb(100, 240, 255), 25);
+        specialEffect = new MaelstromEffect(oppCX, oppCY, w, h, frameCount);
         break;
       }
     }
@@ -724,11 +766,13 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
       if (hostItem) {
         applyItemEffect(hostItem, battleState, 'a');
-        await animateIdle(900);  // enough time for ring effect to play
+        const isSpecialA = hostItem.effect?.startsWith('special_');
+        await animateIdle(isSpecialA ? 3800 : 900);
       }
       if (joinerItem) {
         applyItemEffect(joinerItem, battleState, 'b');
-        await animateIdle(900);
+        const isSpecialB = joinerItem.effect?.startsWith('special_');
+        await animateIdle(isSpecialB ? 3800 : 900);
       }
 
       let events = null;
@@ -812,6 +856,10 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     glitch.update();
     floats.update();
     projectiles.update();
+    if (specialEffect) {
+      specialEffect.update(frameCount);
+      if (specialEffect.done) specialEffect = null;
+    }
     if (p1HitFrames > 0) p1HitFrames--;
     if (p2HitFrames > 0) p2HitFrames--;
 
@@ -907,6 +955,7 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     projectiles.draw(screen);
     glitch.draw(screen);
     floats.draw(screen);
+    if (specialEffect) specialEffect.draw(screen, frameCount);
 
     // Opponent info
     const oppArch = fighterB.archetype?.name || '';

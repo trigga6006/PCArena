@@ -140,6 +140,26 @@ const ITEMS = {
     value: 0.30,
     dropRate: 0.02,
   },
+
+  // ── Special Attacks ──
+  black_hole: {
+    name: 'Black Hole',
+    desc: 'Singularity — 25% HP + stun + DEF down',
+    icon: '●',
+    rarity: 'epic',
+    effect: 'special_black_hole',
+    value: 0.25,
+    dropRate: 0.03,
+  },
+  maelstrom: {
+    name: 'Maelstrom',
+    desc: 'Data storm — 35% HP + STR/SPD down',
+    icon: '◎',
+    rarity: 'legendary',
+    effect: 'special_maelstrom',
+    value: 0.35,
+    dropRate: 0.01,
+  },
 };
 
 const RARITY_COLORS = {

@@ -8,7 +8,7 @@ const { colors, hpColor, rgb } = require('./palette');
 const { MatrixRain, CodeSparkle } = require('./effects/matrix');
 const { GlitchEffect, FloatingText } = require('./effects/glitch');
 const { ProjectileManager } = require('./effects/projectile');
-const { BlackHoleEffect, MaelstromEffect } = require('./effects/special');
+const { BlackHoleEffect, MaelstromEffect, IonCannonEffect, QuantumRiftEffect, SupernovaEffect } = require('./effects/special');
 const { createRNG } = require('./rng');
 const { getSprite } = require('./sprites');
 const {
@@ -315,6 +315,55 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
         floats.add(oppCX - 3, oppCY - 2, 'MAELSTROM', rgb(100, 240, 255), 25);
         specialEffect = new MaelstromEffect(oppCX, oppCY, w, h, frameCount);
+        break;
+      }
+      case 'special_ion_cannon': {
+        const dmg = Math.round(opponent.maxHp * item.value);
+        opponent.hp = Math.max(0, opponent.hp - dmg);
+        opponent.stunned = true;
+        if (dOpp === 'a') targetHpA = opponent.hp;
+        else targetHpB = opponent.hp;
+        addLog(`  ▼ ION CANNON locked on!`, rgb(120, 180, 255));
+        addLog(`  ${dmg} damage + stun`, rgb(200, 230, 255));
+        floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
+        floats.add(oppCX - 3, oppCY - 2, 'ION STRIKE', rgb(180, 220, 255), 25);
+        specialEffect = new IonCannonEffect(oppCX, oppCY, w, h, frameCount);
+        break;
+      }
+      case 'special_quantum_rift': {
+        const dmg = Math.round(opponent.maxHp * item.value);
+        opponent.hp = Math.max(0, opponent.hp - dmg);
+        // MAG down 25% for 3 turns
+        const magLoss = Math.round(opponent.mag * 0.25);
+        opponent.mag = Math.max(1, opponent.mag - magLoss);
+        opponent._boosts = opponent._boosts || [];
+        opponent._boosts.push({ stat: 'mag', amount: -magLoss, turns: 3 });
+        if (dOpp === 'a') targetHpA = opponent.hp;
+        else targetHpB = opponent.hp;
+        addLog(`  ◈ QUANTUM RIFT torn open!`, rgb(255, 100, 255));
+        addLog(`  ${dmg} damage + MAG -${magLoss}`, rgb(200, 150, 255));
+        floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 20);
+        floats.add(oppCX - 3, oppCY - 2, 'RIFT', rgb(255, 100, 255), 25);
+        specialEffect = new QuantumRiftEffect(oppCX, oppCY, w, h, frameCount);
+        break;
+      }
+      case 'special_supernova': {
+        const dmg = Math.round(opponent.maxHp * item.value);
+        opponent.hp = Math.max(0, opponent.hp - dmg);
+        // All stats down 15% for 2 turns
+        opponent._boosts = opponent._boosts || [];
+        for (const stat of ['str', 'def', 'spd', 'mag']) {
+          const loss = Math.round(opponent[stat] * 0.15);
+          opponent[stat] = Math.max(1, opponent[stat] - loss);
+          opponent._boosts.push({ stat, amount: -loss, turns: 2 });
+        }
+        if (dOpp === 'a') targetHpA = opponent.hp;
+        else targetHpB = opponent.hp;
+        addLog(`  ✹ SUPERNOVA detonated!`, rgb(255, 240, 120));
+        addLog(`  ${dmg} dmg + all stats -15%`, rgb(255, 200, 80));
+        floats.add(oppCX, oppCY - 4, `${dmg}`, colors.damage, 25);
+        floats.add(oppCX - 3, oppCY - 2, 'SUPERNOVA', rgb(255, 240, 120), 30);
+        specialEffect = new SupernovaEffect(oppCX, oppCY, w, h, frameCount);
         break;
       }
     }

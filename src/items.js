@@ -160,6 +160,33 @@ const ITEMS = {
     value: 0.35,
     dropRate: 0.01,
   },
+  ion_cannon: {
+    name: 'Ion Cannon',
+    desc: 'Orbital strike — 20% HP + stun',
+    icon: '▼',
+    rarity: 'rare',
+    effect: 'special_ion_cannon',
+    value: 0.20,
+    dropRate: 0.06,
+  },
+  quantum_rift: {
+    name: 'Quantum Rift',
+    desc: 'Reality tear — 22% HP + MAG down',
+    icon: '◈',
+    rarity: 'epic',
+    effect: 'special_quantum_rift',
+    value: 0.22,
+    dropRate: 0.03,
+  },
+  supernova: {
+    name: 'Supernova',
+    desc: 'Star death — 40% HP + all stats down',
+    icon: '✹',
+    rarity: 'legendary',
+    effect: 'special_supernova',
+    value: 0.40,
+    dropRate: 0.008,
+  },
 };
 
 const RARITY_COLORS = {

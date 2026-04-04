@@ -14,6 +14,7 @@ const {
   equipPartOnBuild, unequipPartOnBuild,
   isBuildComplete, applyBuildOverrides, buildSpecsFromParts,
 } = require('./parts');
+const { drawArt, getPartArt } = require('./itemart');
 
 const SLOT_ORDER = ['cpu', 'gpu', 'ram', 'storage'];
 const STAT_NAMES = ['str', 'mag', 'spd', 'vit', 'def', 'hp'];
@@ -152,29 +153,35 @@ function openWorkshop(realSpecs, screen) {
 
       for (let i = 0; i < SLOT_ORDER.length; i++) {
         const type = SLOT_ORDER[i];
-        const y = slotY + i * 2;
+        const y = slotY + i * 3;
         const isCursor = mode === 'slots' && i === slotCursor;
         const partId = build.parts[type];
         const part = partId ? PARTS[partId] : null;
         const tc = TYPE_COLORS[type];
 
+        // Type art on the left
+        const partArt = getPartArt(type);
+        if (partArt) {
+          const artColors = isCursor ? partArt.colors : [colors.dimmer, colors.dimmer, colors.dimmer];
+          drawArt(screen, leftX + 2, y, partArt.lines, artColors);
+        }
+
         if (isCursor) {
           screen.text(leftX, y, '▸', colors.white, null, true);
-          screen.text(leftX + 2, y, TYPE_LABELS[type].padEnd(8), tc, null, true);
-        } else {
-          screen.text(leftX + 2, y, TYPE_LABELS[type].padEnd(8), tc);
         }
+
+        const infoX = leftX + 10;
+        screen.text(infoX, y, TYPE_LABELS[type], isCursor ? tc : colors.dim, null, isCursor);
 
         if (part) {
           const rc = RARITY_COLORS[part.rarity] || colors.dim;
-          const icon = RARITY_ICONS[part.rarity] || '·';
-          screen.text(leftX + 11, y, `${icon} ${part.name}`, isCursor ? colors.white : rc);
-          screen.text(leftX + 11, y + 1, `(${part.rarity})`, colors.dimmer);
+          screen.text(infoX, y + 1, part.name, isCursor ? colors.white : rc);
+          screen.text(infoX, y + 2, `(${part.rarity})`, colors.dimmer);
         } else if (build.main) {
-          screen.text(leftX + 11, y, 'Stock hardware', isCursor ? colors.dim : colors.dimmer);
-          screen.text(leftX + 11, y + 1, '(from scan)', colors.dimmer);
+          screen.text(infoX, y + 1, 'Stock hardware', isCursor ? colors.dim : colors.dimmer);
+          screen.text(infoX, y + 2, '(from scan)', colors.dimmer);
         } else {
-          screen.text(leftX + 11, y, '— empty —', isCursor ? colors.rose : colors.dimmer);
+          screen.text(infoX, y + 1, '— empty —', isCursor ? colors.rose : colors.dimmer);
         }
       }
 
@@ -252,8 +259,8 @@ function openWorkshop(realSpecs, screen) {
         screen.text(leftX + 18, divY + 1, 'Enter = equip   Esc = back', colors.dimmer);
 
         const listY = divY + 3;
-        const maxVisible = Math.max(1, h - listY - 1);
-        const startIdx = Math.max(0, partCursor - maxVisible + 2);
+        const maxVisible = Math.max(1, Math.floor((h - listY - 1) / 4)); // 4 lines per item (3 art + 1 gap)
+        const startIdx = Math.max(0, partCursor - maxVisible + 1);
         const endIdx = Math.min(partsList.length, startIdx + maxVisible);
 
         if (partsList.length === 0) {
@@ -263,22 +270,25 @@ function openWorkshop(realSpecs, screen) {
 
         for (let i = startIdx; i < endIdx; i++) {
           const p = partsList[i];
-          const y = listY + (i - startIdx);
+          const y = listY + (i - startIdx) * 4; // 3 art lines + 1 gap
           const isCur = i === partCursor;
           const rc = RARITY_COLORS[p.rarity] || colors.dim;
-          const icon = RARITY_ICONS[p.rarity] || '·';
 
+          // Art sprite
+          const partArt = getPartArt(p.type);
+          if (partArt) {
+            const artColors = isCur ? partArt.colors : [colors.dimmer, colors.dimmer, colors.dimmer];
+            drawArt(screen, leftX + 2, y, partArt.lines, artColors);
+          }
+
+          const infoX = leftX + 10;
           if (isCur) {
             screen.text(leftX, y, '▸', colors.white, null, true);
-            screen.text(leftX + 2, y, icon, rc, null, true);
-            screen.text(leftX + 4, y, p.name.padEnd(28), colors.white, null, true);
-            screen.text(leftX + 33, y, `x${p.count}`, colors.dim, null, true);
-            screen.text(leftX + 37, y, `(${p.rarity})`, rc);
+            screen.text(infoX, y, p.name, colors.white, null, true);
+            screen.text(infoX, y + 1, `x${p.count}  (${p.rarity})`, rc);
           } else {
-            screen.text(leftX + 2, y, icon, rc);
-            screen.text(leftX + 4, y, p.name.padEnd(28), colors.dim);
-            screen.text(leftX + 33, y, `x${p.count}`, colors.dimmer);
-            screen.text(leftX + 37, y, `(${p.rarity})`, colors.dimmer);
+            screen.text(infoX, y, p.name, colors.dim);
+            screen.text(infoX, y + 1, `x${p.count}  (${p.rarity})`, colors.dimmer);
           }
         }
       }

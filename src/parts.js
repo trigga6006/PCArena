@@ -6,6 +6,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { RESET } = require('./palette');
+const { getPartArt, formatArtForConsole } = require('./itemart');
 
 const WSO_DIR = path.join(__dirname, '..', '.kernelmon');
 const PARTS_FILE = path.join(WSO_DIR, 'parts.json');
@@ -489,8 +490,17 @@ function printOwnedParts() {
     for (const part of owned) {
       const rc = RARITY_COLORS[part.rarity] || dim;
       const tc = TYPE_COLORS[part.type] || dim;
-      const icon = RARITY_ICONS[part.rarity] || '·';
-      console.log(`${cyan}  │  ${rc}${icon} ${bright}${part.name.padEnd(24)}${tc}${TYPE_LABELS[part.type].padEnd(8)}${rc}x${part.count}  (${part.rarity})${cyan.padEnd(1)}│${RESET}`);
+      const art = getPartArt(part.type);
+
+      if (art) {
+        const artStrings = formatArtForConsole(art.lines, art.colors);
+        console.log(`${cyan}  │  ${artStrings[0]} ${bright}${part.name}${' '.repeat(Math.max(0, 39 - part.name.length))}${cyan}│${RESET}`);
+        console.log(`${cyan}  │  ${artStrings[1]} ${tc}${TYPE_LABELS[part.type].padEnd(8)}${rc}x${part.count}  (${part.rarity})${' '.repeat(Math.max(0, 22 - part.rarity.length))}${cyan}│${RESET}`);
+        console.log(`${cyan}  │  ${artStrings[2]}${' '.repeat(42)}${cyan}│${RESET}`);
+      } else {
+        const icon = RARITY_ICONS[part.rarity] || '·';
+        console.log(`${cyan}  │  ${rc}${icon} ${bright}${part.name.padEnd(24)}${tc}${TYPE_LABELS[part.type].padEnd(8)}${rc}x${part.count}  (${part.rarity})${cyan.padEnd(1)}│${RESET}`);
+      }
     }
   }
 

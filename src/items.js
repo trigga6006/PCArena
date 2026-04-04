@@ -271,27 +271,48 @@ function rollRewards(rng, opponentTier = 'mid', won = true) {
 
 // ─── Display ───
 
+const { getItemArt, formatArtForConsole, ART_H } = require('./itemart');
+
 function printInventory() {
   const owned = getOwnedItems();
   const cyan = '\x1b[38;2;130;220;235m';
   const bright = '\x1b[38;2;230;230;245m';
   const dim = '\x1b[38;2;100;100;130m';
+  const W = 60; // inner width
 
   if (owned.length === 0) {
     console.log(`${dim}  No items yet. Win battles to earn loot!${RESET}`);
     return;
   }
 
-  console.log(`${cyan}  ╭──────────────────────────────────────────────────╮${RESET}`);
-  console.log(`${cyan}  │  ${bright}BAG${dim}                                  ${bright}${owned.reduce((s, i) => s + i.count, 0)} items${cyan}  │${RESET}`);
-  console.log(`${cyan}  ├──────────────────────────────────────────────────┤${RESET}`);
+  const totalCount = owned.reduce((s, i) => s + i.count, 0);
+  const countStr = `${totalCount} items`;
+
+  console.log(`${cyan}  ╭${'─'.repeat(W)}╮${RESET}`);
+  console.log(`${cyan}  │  ${bright}BAG${' '.repeat(W - 5 - countStr.length)}${bright}${countStr}${cyan}  │${RESET}`);
+  console.log(`${cyan}  ├${'─'.repeat(W)}┤${RESET}`);
 
   for (const item of owned) {
     const rc = RARITY_COLORS[item.rarity] || dim;
-    console.log(`${cyan}  │  ${rc}${item.icon} ${bright}${item.name.padEnd(22)}${dim}x${item.count}  ${item.desc.padEnd(18).slice(0,18)}${cyan}│${RESET}`);
+    const art = getItemArt(item.id);
+
+    if (art) {
+      const artStrings = formatArtForConsole(art.lines, art.colors);
+      // Line 0: art + name + count
+      const nameStr = `${bright}${item.name}`;
+      const countLabel = `${dim}x${item.count}`;
+      console.log(`${cyan}  │  ${artStrings[0]} ${nameStr}${' '.repeat(Math.max(0, W - 11 - item.name.length - 3))}${countLabel}${cyan}  │${RESET}`);
+      // Line 1: art + description
+      console.log(`${cyan}  │  ${artStrings[1]} ${rc}${item.desc.padEnd(W - 11).slice(0, W - 11)}${cyan}  │${RESET}`);
+      // Line 2: art + rarity label
+      console.log(`${cyan}  │  ${artStrings[2]} ${rc}(${item.rarity})${' '.repeat(Math.max(0, W - 11 - item.rarity.length - 2))}${cyan}  │${RESET}`);
+    } else {
+      // Fallback: single-line (no art)
+      console.log(`${cyan}  │  ${rc}${item.icon} ${bright}${item.name.padEnd(22)}${dim}x${item.count}  ${item.desc.padEnd(W - 32).slice(0, W - 32)}${cyan}│${RESET}`);
+    }
   }
 
-  console.log(`${cyan}  ╰──────────────────────────────────────────────────╯${RESET}`);
+  console.log(`${cyan}  ╰${'─'.repeat(W)}╯${RESET}`);
 }
 
 function printRewards(rewards) {
@@ -302,7 +323,16 @@ function printRewards(rewards) {
   console.log(`${gold}  ◆ LOOT EARNED:${RESET}`);
   for (const item of rewards) {
     const rc = RARITY_COLORS[item.rarity] || '';
-    console.log(`${rc}    ${item.icon} ${bright}${item.name}${rc} (${item.rarity})${RESET}`);
+    const art = getItemArt(item.id);
+
+    if (art) {
+      const artStrings = formatArtForConsole(art.lines, art.colors);
+      console.log(`    ${artStrings[0]} ${bright}${item.name}${rc} (${item.rarity})${RESET}`);
+      console.log(`    ${artStrings[1]}${RESET}`);
+      console.log(`    ${artStrings[2]}${RESET}`);
+    } else {
+      console.log(`${rc}    ${item.icon} ${bright}${item.name}${rc} (${item.rarity})${RESET}`);
+    }
   }
 }
 

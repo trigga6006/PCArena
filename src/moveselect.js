@@ -7,6 +7,7 @@
 const { colors, rgb, RESET, ESC } = require('./palette');
 const { getOwnedItems, useItem, ITEMS, RARITY_COLORS } = require('./items');
 const { SIGNATURE_COLOR, SIGNATURE_ACCENT, SIGNATURE_ICON } = require('./signature');
+const { drawArt, getItemArt, ART_H } = require('./itemart');
 
 const CAT_COLORS = {
   physical: colors.peach,
@@ -106,22 +107,48 @@ function selectMove(moves, screen, logX, logY, logW, logH, onTick) {
         if (bagItems.length === 0) {
           screen.text(logX + 3, logY + 1, 'Bag is empty! Win battles to earn items.', colors.dim);
         } else {
-          for (let i = 0; i < Math.min(bagItems.length, logH - 1); i++) {
+          const ITEM_HEIGHT = ART_H + 1; // 3 art lines + 1 gap
+          const maxVisible = Math.max(1, Math.floor((logH - 1) / ITEM_HEIGHT));
+          // Scroll window follows cursor
+          let scrollStart = 0;
+          if (cursor >= scrollStart + maxVisible) scrollStart = cursor - maxVisible + 1;
+          if (cursor < scrollStart) scrollStart = cursor;
+          const endIdx = Math.min(bagItems.length, scrollStart + maxVisible);
+
+          for (let i = scrollStart; i < endIdx; i++) {
             const item = bagItems[i];
-            const y = logY + 1 + i;
+            const slot = i - scrollStart;
+            const baseY = logY + 1 + slot * ITEM_HEIGHT;
             const selected = i === cursor;
             const rc = RARITY_COLORS[item.rarity] || colors.dim;
+            const art = getItemArt(item.id);
 
-            if (selected) {
-              screen.text(logX + 1, y, '▸', colors.white, null, true);
-              screen.text(logX + 3, y, item.icon, rc, null, true);
-              screen.text(logX + 5, y, `${item.name} x${item.count}`.padEnd(22), colors.white, null, true);
-              screen.text(logX + 28, y, item.desc.slice(0, logW - 32), rc);
-            } else {
-              screen.text(logX + 3, y, item.icon, colors.dimmer);
-              screen.text(logX + 5, y, `${item.name} x${item.count}`.padEnd(22), colors.dim);
-              screen.text(logX + 28, y, item.desc.slice(0, logW - 32), colors.dimmer);
+            // Draw art sprite
+            if (art) {
+              const artColor = selected ? art.colors : [colors.dimmer, colors.dimmer, colors.dimmer];
+              drawArt(screen, logX + 3, baseY, art.lines, artColor);
             }
+
+            // Item info to the right of art
+            const infoX = logX + 11;
+            if (selected) {
+              screen.text(logX + 1, baseY, '▸', colors.white, null, true);
+              screen.text(infoX, baseY, item.name, colors.white, null, true);
+              screen.text(infoX, baseY + 1, item.desc.slice(0, logW - 15), rc);
+              screen.text(infoX, baseY + 2, `x${item.count}  (${item.rarity})`, colors.dim);
+            } else {
+              screen.text(infoX, baseY, item.name, colors.dim);
+              screen.text(infoX, baseY + 1, item.desc.slice(0, logW - 15), colors.dimmer);
+              screen.text(infoX, baseY + 2, `x${item.count}`, colors.dimmer);
+            }
+          }
+
+          // Scroll indicators
+          if (scrollStart > 0) {
+            screen.text(logX + logW - 3, logY, '▲', colors.dim);
+          }
+          if (endIdx < bagItems.length) {
+            screen.text(logX + logW - 3, logY + logH - 1, '▼', colors.dim);
           }
         }
       }

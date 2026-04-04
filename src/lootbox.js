@@ -9,6 +9,7 @@ const { createRNG } = require('./rng');
 const { getBalance, spendCredits, formatBalance } = require('./credits');
 const { ITEMS, addItem } = require('./items');
 const { PARTS, RARITY_COLORS, RARITY_ICONS, TYPE_LABELS, TYPE_COLORS, addPart } = require('./parts');
+const { drawArt, getItemArt, getPartArt } = require('./itemart');
 
 // ─── Box tiers ───
 
@@ -197,31 +198,39 @@ async function openLootBoxAnimated(box, screen) {
   screen.centerText(1, `${box.icon}  ${box.name}  ${box.icon}`, box.color, null, true);
   screen.hline(4, 2, w - 8, '─', colors.dimmer);
 
-  // Big reveal
-  screen.centerText(cy - 3, '╔════════════════════════════════╗', rc);
-  screen.centerText(cy - 2, '║                                ║', rc);
+  // Big reveal box
+  screen.centerText(cy - 4, '╔════════════════════════════════╗', rc);
+  screen.centerText(cy - 3, '║                                ║', rc);
+
+  // Art sprite centered above the name
+  const rewardArt = reward.type === 'item' ? getItemArt(reward.id) : getPartArt(reward.partType);
+  if (rewardArt) {
+    const artX = cx - 3; // center the 7-wide art
+    drawArt(screen, artX, cy - 3, rewardArt.lines, rewardArt.colors);
+  }
+
+  screen.centerText(cy - 0, '║', rc);
 
   const rewardLine = `${icon}  ${reward.name}`;
-  screen.centerText(cy - 1, '║', rc);
-  screen.centerText(cy - 1, rewardLine, colors.white, null, true);
+  screen.centerText(cy, rewardLine, colors.white, null, true);
 
   const rarityLine = `(${reward.rarity})`;
-  screen.centerText(cy, '║', rc);
-  screen.centerText(cy, rarityLine, rc, null, true);
+  screen.centerText(cy + 1, '║', rc);
+  screen.centerText(cy + 1, rarityLine, rc, null, true);
 
   if (reward.type === 'part') {
     const typeLine = `${TYPE_LABELS[reward.partType]} component`;
-    screen.centerText(cy + 1, '║', rc);
-    screen.centerText(cy + 1, typeLine, TYPE_COLORS[reward.partType]);
+    screen.centerText(cy + 2, '║', rc);
+    screen.centerText(cy + 2, typeLine, TYPE_COLORS[reward.partType]);
   } else {
-    screen.centerText(cy + 1, '║', rc);
-    screen.centerText(cy + 1, 'Battle item', colors.dim);
+    screen.centerText(cy + 2, '║', rc);
+    screen.centerText(cy + 2, 'Battle item', colors.dim);
   }
 
-  screen.centerText(cy + 2, '║                                ║', rc);
-  screen.centerText(cy + 3, '╚════════════════════════════════╝', rc);
+  screen.centerText(cy + 3, '║                                ║', rc);
+  screen.centerText(cy + 4, '╚════════════════════════════════╝', rc);
 
-  screen.centerText(cy + 5, 'Added to your inventory!', colors.mint);
+  screen.centerText(cy + 6, 'Added to your inventory!', colors.mint);
   screen.centerText(h - 3, `Balance: ${formatBalance(getBalance())} credits`, colors.dim);
   screen.centerText(h - 2, 'Press any key to continue', colors.dimmer);
 

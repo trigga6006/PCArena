@@ -19,10 +19,10 @@ class MatrixRain {
     for (let x = 0; x < width; x++) {
       this.columns.push({
         y: rng.int(-height, 0),
-        speed: rng.float(0.3, 1.2),
-        length: rng.int(4, 14),
+        speed: rng.float(0.2, 0.8),
+        length: rng.int(4, 10),
         accumulator: 0,
-        active: rng.chance(0.55),
+        active: rng.chance(0.4),
         chars: [],
       });
 
@@ -42,8 +42,8 @@ class MatrixRain {
       }
       if (col.y - col.length > this.height) {
         col.y = this.rng.int(-8, -1);
-        col.speed = this.rng.float(0.3, 1.2);
-        col.length = this.rng.int(4, 14);
+        col.speed = this.rng.float(0.2, 0.8);
+        col.length = this.rng.int(4, 10);
         // Stay active — initial activation controls density, reset just recycles
         // (previously rng.chance(0.55) could deactivate evenly-spaced columns)
       }

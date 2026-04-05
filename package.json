@@ -12,7 +12,8 @@
     "start": "node bin/cli.js",
     "host": "node bin/cli.js host",
     "join": "node bin/cli.js join",
-    "demo": "node bin/cli.js demo"
+    "demo": "node bin/cli.js demo",
+    "demo-battle": "node bin/demo-battle.js"
   },
   "keywords": [
     "cli",

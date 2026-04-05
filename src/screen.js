@@ -205,13 +205,15 @@ class Screen {
   }
 
   // Output a segment of cells from startX to endX (inclusive) on row y
+  // Each cell is positioned absolutely to prevent character-width drift
+  // (some terminals render box-drawing/unicode chars as double-width)
   _emitSegment(parts, y, row, prow, startX, endX) {
-    parts.push(`${ESC}${y + 1};${startX + 1}H`); // position cursor
     let lastFg = null;
     let lastBg = null;
     let lastBold = false;
 
     for (let x = startX; x <= endX; x++) {
+      parts.push(`${ESC}${y + 1};${x + 1}H`);
       const c = row[x];
       const needFg = c.fg !== lastFg;
       const needBg = c.bg !== lastBg;

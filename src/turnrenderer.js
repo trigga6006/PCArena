@@ -83,7 +83,7 @@ function getCallsign(fighter) {
 }
 
 async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options = {}) {
-  const { role, roomCode, relayUrl, seed } = options;
+  const { role, roomCode, relayUrl, seed, autoPlay } = options;
   const isOnline = !!roomCode;
   const isHost = role === 'host' || !isOnline;
 
@@ -397,14 +397,16 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
   screen.enter();
 
-  // ─── Pre-battle lobby ───
-  try {
-    const finalMoves = await preBattleLobby(fighterA, fighterB, screen, movesetA);
-    if (Array.isArray(finalMoves) && finalMoves.length === 4) {
-      movesetA = finalMoves;
+  // ─── Pre-battle lobby (skipped in auto-play mode) ───
+  if (!autoPlay) {
+    try {
+      const finalMoves = await preBattleLobby(fighterA, fighterB, screen, movesetA);
+      if (Array.isArray(finalMoves) && finalMoves.length === 4) {
+        movesetA = finalMoves;
+      }
+    } catch (e) {
+      // If pre-battle fails (e.g. non-interactive), keep default moveset
     }
-  } catch (e) {
-    // If pre-battle fails (e.g. non-interactive), keep default moveset
   }
 
   // ─── Battle intro ───
@@ -563,12 +565,106 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
   let lastTickTime = Date.now();
 
+  // ─── Auto-play driver (demo mode) ───
+  let autoTurnIndex = 0;
+  let autoTyping = false;
+  let autoTypeTimer = null;
+  let autoSelectStarted = false;
+  let autoQteStarted = false;
+
+  function autoPlayTick() {
+    if (!autoPlay) return;
+
+    // Auto-type quick hack commands character by character
+    if (phase === 'quicktime' && qteResolve && !autoTyping && !autoQteStarted) {
+      autoQteStarted = true;
+      autoTyping = true;
+      const cmd = qteCommand;
+      let i = 0;
+      const charDelay = Math.min(120, 1800 / (cmd.length || 1));
+      autoTypeTimer = setInterval(() => {
+        if (i < cmd.length) {
+          qteInput += cmd[i];
+          i++;
+        } else {
+          clearInterval(autoTypeTimer);
+          autoTypeTimer = null;
+          autoTyping = false;
+          setTimeout(() => {
+            if (qteResolve) {
+              const r = qteResolve; qteResolve = null;
+              r(qteInput.trim().toLowerCase() === qteCommand.toLowerCase());
+            }
+          }, 300);
+        }
+      }, charDelay);
+      return;
+    }
+
+    // Auto-select moves and items
+    if (phase === 'select' && moveResolve && !autoSelectStarted) {
+      autoSelectStarted = true;
+      const plan = autoPlay.turns && autoPlay.turns[autoTurnIndex];
+      autoTurnIndex++;
+
+      if (plan && plan.type === 'item') {
+        // Navigate to bag then select item
+        bagItems = getOwnedItems();
+        const targetItem = bagItems.find(it => it.id === plan.itemId);
+        if (targetItem) {
+          // Show cursor moving to BAG slot, then into bag, then to item
+          selectMode = 'moves';
+          cursor = movesetA.length; // BAG slot
+          setTimeout(() => {
+            selectMode = 'bag';
+            bagItems = getOwnedItems();
+            cursor = bagItems.findIndex(it => it.id === plan.itemId);
+            if (cursor < 0) cursor = 0;
+            setTimeout(() => {
+              if (moveResolve && bagItems.length > 0) {
+                const r = moveResolve; moveResolve = null;
+                r({ type: 'item', item: bagItems[cursor] });
+              }
+            }, 600);
+          }, 600);
+          return;
+        }
+      }
+
+      // Default: pick a move with cursor animation
+      const moveIdx = plan && plan.type === 'move' && typeof plan.moveIndex === 'number'
+        ? plan.moveIndex % movesetA.length
+        : autoTurnIndex % movesetA.length;
+
+      // Animate cursor scrolling to target
+      let scrollStep = 0;
+      const scrollTimer = setInterval(() => {
+        if (scrollStep >= moveIdx) {
+          clearInterval(scrollTimer);
+          setTimeout(() => {
+            if (moveResolve) {
+              const r = moveResolve; moveResolve = null;
+              r({ type: 'move', move: movesetA[cursor] });
+            }
+          }, 400);
+          return;
+        }
+        scrollStep++;
+        cursor = scrollStep;
+      }, 200);
+      return;
+    }
+  }
+
   // ─── Key handler (stays active for the entire battle) ───
   function onKey(key) {
     if (key === '\x03') {
+      if (autoTypeTimer) clearInterval(autoTypeTimer);
       cleanupAll();
       process.exit(0);
     }
+
+    if (autoPlay) return; // ignore manual input in auto-play mode
 
     // Quick-time event input — typing characters
     if (phase === 'quicktime') {
@@ -689,6 +785,9 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
     screen.render();
 
+    // Auto-play driver — fires after render so UI updates are visible
+    autoPlayTick();
+
     // Resolve phase promises AFTER render (so last frame is visible)
     if (phase === 'animating' && animElapsed >= TURN_ANIM_MS && animResolve) {
       const r = animResolve; animResolve = null; r();
@@ -707,6 +806,7 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       glitch.active = [];
       floats.items = [];
       turnTimerStart = Date.now();
+      autoSelectStarted = false;
       moveResolve = resolve;
     });
   }
@@ -737,12 +837,15 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       qteInput = '';
       qteStartTime = Date.now();
       phase = 'quicktime';
+      autoQteStarted = false;
+      autoTyping = false;
       qteResolve = resolve;
     });
   }
 
   function cleanupAll() {
     clearInterval(renderLoop);
+    if (autoTypeTimer) clearInterval(autoTypeTimer);
     stdin.removeListener('data', onKey);
     try { stdin.setRawMode(false); } catch (e) {}
     try { stdin.pause(); } catch (e) {}
@@ -939,7 +1042,7 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     glitch.screenTear(w, 8);
     glitch.scatter(w / 2, h / 2, w, h, 25, 10);
 
-    await animateIdle(5000);
+    await animateIdle(autoPlay ? 2500 : 5000);
 
     if (isOnline) endBattle(relayUrl, roomCode);
 

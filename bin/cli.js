@@ -250,8 +250,8 @@ async function main() {
         console.log('\n\x1b[38;2;130;220;235m  ◆ Scanning hardware...\x1b[0m\n');
         const specs = await getSpecs();
         const fighter = await buildFighter(specs);
-        const available = getAvailableMoves(fighter.stats);
-        const equipped = getEquippedMoves(fighter.stats);
+        const available = getAvailableMoves(fighter.stats, fighter.specs, fighter.archetype);
+        const equipped = getEquippedMoves(fighter.stats, fighter.specs, fighter.archetype);
         const sigMoves = generateSignatureMoves(fighter.stats, fighter.specs, fighter.archetype);
 
         const cyan = '\x1b[38;2;130;220;235m';
@@ -282,11 +282,11 @@ async function main() {
           console.log(`${cyan}  │  ${marker} ${isEquipped ? bright : dim}${m.label.padEnd(22)}${dim}${m.cat.padEnd(10)} ${m.desc.padEnd(16).slice(0,16)}${cyan}│${RESET}`);
         });
         console.log(`${cyan}  ╰──────────────────────────────────────────────────╯${RESET}`);
-        console.log(`${dim}  To change loadout: kmon loadout set <move1> <move2> <move3> <move4>${RESET}`);
+        console.log(`${dim}  To change loadout: kmon loadout set <move1> <move2> ... <move6>${RESET}`);
 
         // Handle "kmon loadout set ..."
-        if (args[1] === 'set' && args.length >= 6) {
-          const names = args.slice(2, 6).map(n => n.toUpperCase());
+        if (args[1] === 'set' && args.length >= 8) {
+          const names = args.slice(2, 8).map(n => n.toUpperCase());
           const valid = names.every(n => MOVE_POOL[n] && available.some(m => m.name === n));
           if (valid) {
             saveLoadout(names);
@@ -348,7 +348,7 @@ async function main() {
         if (turnMode) {
           const myMoves = getEquippedMoves(myFighter.stats, myFighter.specs, myFighter.archetype);
           registerSignatureAnims(myMoves.filter(m => m.signature));
-          const oppMoves = assignMoveset(opponent.stats);
+          const oppMoves = assignMoveset(opponent.stats, opponent.specs, opponent.archetype);
           console.log('\x1b[38;2;240;220;140m  ◆ Turn-based battle starting...\x1b[0m\n');
           await sleep(2000);
           winner = await renderTurnBattle(myFighter, opponent, myMoves, oppMoves, {
@@ -417,7 +417,7 @@ async function main() {
           // Turn-based: joiner is fighterA (foreground), opponent is fighterB
           const myMoves = getEquippedMoves(myFighter.stats, myFighter.specs, myFighter.archetype);
           registerSignatureAnims(myMoves.filter(m => m.signature));
-          const oppMoves = assignMoveset(opponent.stats);
+          const oppMoves = assignMoveset(opponent.stats, opponent.specs, opponent.archetype);
           console.log('\x1b[38;2;240;220;140m  ◆ Turn-based battle starting...\x1b[0m\n');
           await sleep(2000);
           winner = await renderTurnBattle(myFighter, opponent, myMoves, oppMoves, {
@@ -525,7 +525,7 @@ async function main() {
         if (turnMode) {
           const myMoves = getEquippedMoves(myFighter.stats, myFighter.specs, myFighter.archetype);
           registerSignatureAnims(myMoves.filter(m => m.signature));
-          const oppMoves = assignMoveset(opponent.stats);
+          const oppMoves = assignMoveset(opponent.stats, opponent.specs, opponent.archetype);
 
           const seed = combinedSeed(myFighter.id, opponent.id);
           const winner = await renderTurnBattle(myFighter, opponent, myMoves, oppMoves, { role: 'host', seed });

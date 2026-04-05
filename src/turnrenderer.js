@@ -28,6 +28,8 @@ const {
 const { useItem, getOwnedItems, ITEMS, RARITY_COLORS } = require('./items');
 const { preBattleLobby } = require('./prebattle');
 const { getBenchmarkLogEntries } = require('./benchmark');
+const { getCategoryMultiplier } = require('./balance');
+const { SIGNATURE_COLOR, SIGNATURE_ACCENT, SIGNATURE_ICON } = require('./signature');
 
 const FPS = 20;
 const FRAME_MS = 1000 / FPS;
@@ -152,8 +154,8 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
   const oppBarX = Math.floor(w * 0.33);
   const plyBarX = Math.floor(w * 0.28);
   const plyBarY = plyY + 8;
-  const logY = h - 7;
-  const logHeight = 6;  // header + 4 moves + BAG
+  const logY = h - 8;
+  const logHeight = 7;  // header + 6 moves (BAG accessed via right arrow)
   const logX = 3;
   const logW = w - 6;
 
@@ -432,9 +434,14 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
   // Phase state
   let phase = 'idle'; // 'select' | 'waiting' | 'animating' | 'idle' | 'quicktime'
-  let cursor = 0;
+  let cursorRow = 0;   // 0-2 = move rows, 3 = BAG
+  let cursorCol = 0;   // 0 = left column, 1 = right column
   let selectMode = 'moves'; // 'moves' | 'bag'
   let bagItems = [];
+  // Helper: get linear move index from row/col
+  function getCursorIndex() { return cursorRow * 2 + cursorCol; }
+  // Legacy compat: expose cursor as linear index for auto-select etc.
+  let cursor = 0;
   let moveResolve = null;
   let turnTimerStart = 0; // timestamp when selection began
 
@@ -608,25 +615,20 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       autoTurnIndex++;
 
       if (plan && plan.type === 'item') {
-        // Navigate to bag then select item
+        // Navigate right to bag then select item
         bagItems = getOwnedItems();
         const targetItem = bagItems.find(it => it.id === plan.itemId);
         if (targetItem) {
-          // Show cursor moving to BAG slot, then into bag, then to item
-          selectMode = 'moves';
-          cursor = movesetA.length; // BAG slot
+          selectMode = 'bag';
+          bagItems = getOwnedItems();
+          cursor = bagItems.findIndex(it => it.id === plan.itemId);
+          if (cursor < 0) cursor = 0;
           setTimeout(() => {
-            selectMode = 'bag';
-            bagItems = getOwnedItems();
-            cursor = bagItems.findIndex(it => it.id === plan.itemId);
-            if (cursor < 0) cursor = 0;
-            setTimeout(() => {
-              if (moveResolve && bagItems.length > 0) {
-                const r = moveResolve; moveResolve = null;
-                r({ type: 'item', item: bagItems[cursor] });
-              }
-            }, 600);
-          }, 600);
+            if (moveResolve && bagItems.length > 0) {
+              const r = moveResolve; moveResolve = null;
+              r({ type: 'item', item: bagItems[cursor] });
+            }
+          }, 800);
           return;
         }
       }
@@ -636,6 +638,11 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
         ? plan.moveIndex % movesetA.length
         : autoTurnIndex % movesetA.length;
 
+      // Set 2D cursor to target move
+      cursorRow = Math.floor(moveIdx / 2);
+      cursorCol = moveIdx % 2;
+      cursor = moveIdx;
+
       // Animate cursor scrolling to target
       let scrollStep = 0;
       const scrollTimer = setInterval(() => {
@@ -644,12 +651,14 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
           setTimeout(() => {
             if (moveResolve) {
               const r = moveResolve; moveResolve = null;
-              r({ type: 'move', move: movesetA[cursor] });
+              r({ type: 'move', move: movesetA[moveIdx] });
             }
           }, 400);
           return;
         }
         scrollStep++;
+        cursorRow = Math.floor(scrollStep / 2);
+        cursorCol = scrollStep % 2;
         cursor = scrollStep;
       }, 200);
       return;
@@ -686,31 +695,40 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
 
     if (phase !== 'select') return;
 
-    const totalSlots = movesetA.length + 1;
-    if (key === '\x1b[A' || key === 'k') {
-      const max = selectMode === 'moves' ? totalSlots : bagItems.length;
-      if (max > 0) cursor = (cursor - 1 + max) % max;
-    } else if (key === '\x1b[B' || key === 'j') {
-      const max = selectMode === 'moves' ? totalSlots : bagItems.length;
-      if (max > 0) cursor = (cursor + 1) % max;
-    } else if (key === '\r' || key === '\n' || key === ' ') {
-      if (selectMode === 'moves') {
+    if (selectMode === 'moves') {
+      if (key === '\x1b[A' || key === 'k') {
+        if (movesetA.length > 0) cursor = (cursor - 1 + movesetA.length) % movesetA.length;
+      } else if (key === '\x1b[B' || key === 'j') {
+        if (movesetA.length > 0) cursor = (cursor + 1) % movesetA.length;
+      } else if (key === '\x1b[C' || key === 'l' || key === 'd') {
+        // Right → open bag
+        bagItems = getOwnedItems();
+        selectMode = 'bag';
+        cursor = 0;
+      } else if (key === '\r' || key === '\n' || key === ' ') {
         if (cursor < movesetA.length) {
-          if (moveResolve) { const r = moveResolve; moveResolve = null; r({ type: 'move', move: movesetA[cursor] }); }
-        } else {
-          bagItems = getOwnedItems();
-          selectMode = 'bag';
-          cursor = 0;
+          const move = movesetA[cursor];
+          const myCooldowns = battleState[meSlot].cooldowns || {};
+          if (myCooldowns[move.name] && myCooldowns[move.name] > 0) {
+            // Move on cooldown — flash feedback but don't select
+          } else if (moveResolve) {
+            const r = moveResolve; moveResolve = null; r({ type: 'move', move });
+          }
         }
-      } else if (selectMode === 'bag') {
+      }
+    } else if (selectMode === 'bag') {
+      if (key === '\x1b[A' || key === 'k') {
+        if (bagItems.length > 0) cursor = (cursor - 1 + bagItems.length) % bagItems.length;
+      } else if (key === '\x1b[B' || key === 'j') {
+        if (bagItems.length > 0) cursor = (cursor + 1) % bagItems.length;
+      } else if (key === '\r' || key === '\n' || key === ' ') {
         if (bagItems.length > 0 && cursor < bagItems.length) {
           if (moveResolve) { const r = moveResolve; moveResolve = null; r({ type: 'item', item: bagItems[cursor] }); }
         }
-      }
-    } else if (key === '\x1b' || key === 'q') {
-      if (selectMode === 'bag') {
+      } else if (key === '\x1b' || key === 'q' || key === '\x1b[D' || key === 'h' || key === 'a') {
         selectMode = 'moves';
-        cursor = movesetA.length;
+        cursorRow = 0;
+        cursorCol = 0;
       }
     }
   }
@@ -802,6 +820,8 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     return new Promise(resolve => {
       phase = 'select';
       cursor = 0;
+      cursorRow = 0;
+      cursorCol = 0;
       selectMode = 'moves';
       glitch.active = [];
       floats.items = [];
@@ -914,10 +934,12 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
           addLog(`Used: ${item.name}`, colors.mint);
         }
         myMove = movesetA[0];
-        addLog(`Auto-attack: ${myMove.label}`, colors.p1);
+        const autoIcon = myMove.signature ? SIGNATURE_ICON : (CAT_ICONS[myMove.cat] || '·');
+        addLog(`${autoIcon} Auto-attack: ${myMove.label}`, colors.p1);
       } else {
         myMove = choice.move;
-        addLog(`You chose: ${myMove.label}`, colors.p1);
+        const moveIcon = myMove.signature ? SIGNATURE_ICON : (CAT_ICONS[myMove.cat] || '·');
+        addLog(`${moveIcon} You chose: ${myMove.label}`, colors.p1);
       }
 
       let opponentMove;
@@ -953,7 +975,10 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       }
 
       if (opponentForfeited) addLog('Opponent forfeited turn', colors.rose);
-      else addLog(`Opponent chose: ${opponentMove.label}`, colors.p2);
+      else {
+        const oppIcon = opponentMove.signature ? SIGNATURE_ICON : (CAT_ICONS[opponentMove.cat] || '·');
+        addLog(`${oppIcon} Opponent chose: ${opponentMove.label}`, colors.p2);
+      }
 
       const hostQuickHackPlan = isOnline ? getQuickHackPlan(turnNum, 'host') : (isHost ? myQuickHackPlan : null);
       const joinerQuickHackPlan = isOnline ? getQuickHackPlan(turnNum, 'joiner') : (!isHost ? myQuickHackPlan : null);
@@ -1326,42 +1351,54 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
     if (selectMode === 'moves') {
       screen.text(logX + 1, logY, '╸ SELECT YOUR MOVE ╺', colors.gold, null, true);
 
+      const myCooldowns = battleState[meSlot].cooldowns || {};
+      const oppArchetype = battleState[oppSlot].archetype;
+      const labelW = Math.min(22, Math.floor(logW * 0.4));
+
+      // Single-column list of all 6 moves
       for (let i = 0; i < movesetA.length; i++) {
         const m = movesetA[i];
         const y = logY + 1 + i;
-        const selected = i === cursor;
-        const icon = CAT_ICONS[m.cat] || '·';
-        const catColor = CAT_COLORS[m.cat] || colors.dim;
+        const selected = cursor === i;
+        const onCooldown = myCooldowns[m.name] && myCooldowns[m.name] > 0;
+        const cdText = onCooldown ? `[${myCooldowns[m.name]}]` : '';
+        const isSig = m.signature;
+        const icon = isSig ? SIGNATURE_ICON : (CAT_ICONS[m.cat] || '·');
+        const baseColor = isSig ? SIGNATURE_COLOR : (CAT_COLORS[m.cat] || colors.dim);
+        const dimColor = isSig ? SIGNATURE_ACCENT : colors.dimmer;
 
-        if (selected) {
-          screen.text(logX + 1, y, '▸', colors.white, null, true);
-          screen.text(logX + 3, y, icon, catColor, null, true);
-          screen.text(logX + 5, y, m.label.padEnd(20), colors.white, null, true);
-          screen.text(logX + 26, y, m.desc, catColor);
-        } else {
+        if (onCooldown) {
+          if (selected) screen.text(logX + 1, y, '▸', colors.dim, null, true);
           screen.text(logX + 3, y, icon, colors.dimmer);
-          screen.text(logX + 5, y, m.label.padEnd(20), colors.dim);
-          screen.text(logX + 26, y, m.desc, colors.dimmer);
+          screen.text(logX + 5, y, m.label.slice(0, labelW).padEnd(labelW), colors.dimmer);
+          screen.text(logX + 5 + labelW + 1, y, cdText, colors.rose);
+        } else if (selected) {
+          screen.text(logX + 1, y, '▸', colors.white, null, true);
+          screen.text(logX + 3, y, icon, baseColor, null, true);
+          screen.text(logX + 5, y, m.label.slice(0, labelW).padEnd(labelW), colors.white, null, true);
+          screen.text(logX + 5 + labelW + 1, y, m.desc.slice(0, 20), baseColor);
+          const catMult = getCategoryMultiplier(m.cat, oppArchetype);
+          if (catMult > 1.0) screen.text(logX + 5 + labelW + 22, y, '!!', colors.mint, null, true);
+          else if (catMult < 1.0) screen.text(logX + 5 + labelW + 22, y, '..', colors.rose);
+        } else {
+          screen.text(logX + 3, y, icon, dimColor);
+          screen.text(logX + 5, y, m.label.slice(0, labelW).padEnd(labelW), isSig ? SIGNATURE_ACCENT : colors.dim);
         }
       }
 
-      // BAG option
-      const bagY = logY + 1 + movesetA.length;
-      const bagSelected = cursor === movesetA.length;
+      // BAG box in the center-right area
+      const bagX = logX + Math.floor(logW / 2) + 2;
+      const bagCenterY = logY + 3;
       const ownedCount = getOwnedItems().reduce((s, i) => s + i.count, 0);
-      if (bagSelected) {
-        screen.text(logX + 1, bagY, '▸', colors.white, null, true);
-        screen.text(logX + 3, bagY, '◰', colors.mint, null, true);
-        screen.text(logX + 5, bagY, 'BAG'.padEnd(20), colors.white, null, true);
-        screen.text(logX + 26, bagY, `${ownedCount} items`, colors.mint);
-      } else {
-        screen.text(logX + 3, bagY, '◰', colors.dimmer);
-        screen.text(logX + 5, bagY, 'BAG'.padEnd(20), colors.dim);
-        screen.text(logX + 26, bagY, `${ownedCount} items`, colors.dimmer);
-      }
+      screen.text(bagX, bagCenterY - 1, '┌──────────┐', colors.mint);
+      screen.text(bagX, bagCenterY,     '│ ◰ BAG    │', colors.mint);
+      screen.text(bagX, bagCenterY + 1, `│ ${String(ownedCount).padStart(3)} items│`, colors.dim);
+      screen.text(bagX, bagCenterY + 2, '└──────────┘', colors.mint);
+      screen.text(bagX + 2, bagCenterY + 3, '▸ to open', colors.dimmer);
 
     } else if (selectMode === 'bag') {
-      screen.text(logX + 1, logY, '╸ USE AN ITEM ╺  (Esc to go back)', colors.mint, null, true);
+      screen.text(logX + 1, logY, '╸ USE AN ITEM ╺', colors.mint, null, true);
+      screen.text(logX + logW - 10, logY, '◂ MOVES', colors.dim);
 
       if (bagItems.length === 0) {
         screen.text(logX + 3, logY + 1, 'Bag is empty! Win battles to earn items.', colors.dim);
@@ -1505,7 +1542,10 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       if (event.isCrit) logLine += ' ★CRIT';
       logLine += ` [${event.damage}]`;
       addLog(logLine, event.isCrit ? colors.crit : (isMe ? colors.p1 : colors.p2));
-      addLog(`  ${event.flavor}`, colors.dimmer);
+      if (event.categoryEffect === 'super_effective') addLog('  Super effective!', colors.mint);
+      else if (event.categoryEffect === 'not_effective') addLog('  Not very effective...', colors.rose);
+      if (event.specialEffect === 'dot') addLog('  Inflicted damage over time!', colors.gold);
+      if (event.specialEffect === 'harden') addLog('  Defense hardened!', colors.sky);
       if (event.resisted) addLog('  Thermal guard resisted the debuff', colors.mint);
 
     } else if (event.type === 'dodge') {
@@ -1533,6 +1573,21 @@ async function renderTurnBattle(fighterA, fighterB, movesetA, movesetB, options 
       const sx = dWho === 'a' ? plyCenterX : oppCenterX;
       const sy = dWho === 'a' ? plyCenterY - 3 : oppCenterY - 2;
       floats.add(sx, sy, 'STUNNED', colors.rose, 16);
+
+    } else if (event.type === 'dot') {
+      const dWho = toDisplay(event.who);
+      const whoLabel = dWho === 'a' ? nameA : nameB;
+      if (dWho === 'a') targetHpA = isHost ? event.hpA : event.hpB;
+      else targetHpB = isHost ? event.hpB : event.hpA;
+      addLog(`${whoLabel.slice(0, 14)} takes ${event.damage} burn damage`, colors.gold);
+      const cx = dWho === 'a' ? plyCenterX : oppCenterX;
+      const cy = dWho === 'a' ? plyCenterY - 3 : oppCenterY - 2;
+      floats.add(cx, cy, `-${event.damage}`, colors.gold, 10);
+
+    } else if (event.type === 'stall') {
+      const dWho = toDisplay(event.who);
+      const whoLabel = dWho === 'a' ? nameA : nameB;
+      addLog(`${whoLabel.slice(0, 14)} stalled! (${event.passive})`, colors.rose);
 
     } else if (event.type === 'ko') {
       const dLoser = toDisplay(event.loser);

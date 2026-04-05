@@ -20,6 +20,9 @@ function createBattleState(fighterA, fighterB, seed) {
     a: {
       ...fighterA.stats, hp: fighterA.stats.hp, maxHp: fighterA.stats.maxHp,
       stunned: false, debuffed: false,
+      hardened: 0,       // turns of harden remaining
+      dot: null,         // { damage, turns } damage-over-time
+      cooldowns: {},     // { MOVE_NAME: turnsRemaining }
       archetype: fighterA.archetype?.name || 'DAEMON',
       benchmark: normalizeBenchmarkProfile(fighterA.benchmark),
       consecutiveAttacks: 0,
@@ -27,6 +30,9 @@ function createBattleState(fighterA, fighterB, seed) {
     b: {
       ...fighterB.stats, hp: fighterB.stats.hp, maxHp: fighterB.stats.maxHp,
       stunned: false, debuffed: false,
+      hardened: 0,
+      dot: null,
+      cooldowns: {},
       archetype: fighterB.archetype?.name || 'DAEMON',
       benchmark: normalizeBenchmarkProfile(fighterB.benchmark),
       consecutiveAttacks: 0,
@@ -40,6 +46,30 @@ function processTurn(state, moveA, moveB) {
   const { rng } = state;
   state.turn++;
   const events = [];
+
+  // ── Tick cooldowns for both fighters ──
+  for (const fighter of [state.a, state.b]) {
+    for (const name of Object.keys(fighter.cooldowns)) {
+      fighter.cooldowns[name]--;
+      if (fighter.cooldowns[name] <= 0) delete fighter.cooldowns[name];
+    }
+  }
+
+  // ── Apply DoT (damage over time) to both fighters ──
+  for (const [who, fighter] of [['a', state.a], ['b', state.b]]) {
+    if (fighter.dot && fighter.dot.turns > 0) {
+      const dotDmg = fighter.dot.damage;
+      fighter.hp = Math.max(1, fighter.hp - dotDmg);
+      fighter.dot.turns--;
+      if (fighter.dot.turns <= 0) fighter.dot = null;
+      events.push({
+        type: 'dot', who, turn: state.turn,
+        damage: dotDmg, hpA: state.a.hp, hpB: state.b.hp,
+      });
+    }
+    // Tick harden duration
+    if (fighter.hardened > 0) fighter.hardened--;
+  }
 
   // Determine attack order by SPD (with archetype modifiers)
   const modsA = getCombatModifiers({
@@ -93,6 +123,10 @@ function processTurn(state, moveA, moveB) {
       const healAmt = Math.round((atk[move.base] || atk.vit) * move.mult * rng.float(0.8, 1.2));
       atk.hp = Math.min(atk.maxHp, atk.hp + healAmt);
       atk.consecutiveAttacks = 0;
+      // Set cooldown BEFORE continuing (otherwise heal moves skip it)
+      if (move.cooldown && move.cooldown > 0) {
+        atk.cooldowns[move.name] = move.cooldown;
+      }
       events.push({
         type: 'heal', who, turn: state.turn,
         move: move.name, label: move.label, flavor: move.desc,
@@ -115,9 +149,14 @@ function processTurn(state, moveA, moveB) {
     // Apply archetype damage multiplier + underdog flat damage
     damage = Math.round(damage * mods.damageMult) + (mods.flatDamage || 0);
 
-    // Defense reduction (with defender's passive defense bonus)
+    // Apply category effectiveness (physical/magic/speed vs defender archetype)
+    const categoryMult = mods.categoryMult || 1.0;
+    damage = Math.round(damage * categoryMult);
+
+    // Defense reduction (with defender's passive defense bonus + harden)
     const defValue = effectiveStat(def.def);
-    const defReduction = defValue * rng.float(0.15, 0.35) * (defMods.defMult || 1);
+    const hardenMult = def.hardened > 0 ? 1.4 : 1.0;
+    const defReduction = defValue * rng.float(0.15, 0.35) * (defMods.defMult || 1) * hardenMult;
     damage = Math.max(1, Math.round(damage - defReduction));
 
     if (atk.debuffed) {
@@ -139,6 +178,10 @@ function processTurn(state, moveA, moveB) {
 
     if (isDodge) {
       atk.consecutiveAttacks++;
+      // Set cooldown even on dodge — the move was committed
+      if (move.cooldown && move.cooldown > 0) {
+        atk.cooldowns[move.name] = move.cooldown;
+      }
       events.push({
         type: 'dodge', who: defender, attacker: who, turn: state.turn,
         move: move.name, label: move.label, flavor: move.desc,
@@ -174,12 +217,35 @@ function processTurn(state, moveA, moveB) {
       }
     } else if (move.special === 'pierce') {
       specialEffect = 'pierce';
+    } else if (move.special === 'dot') {
+      def.dot = { damage: Math.round(damage * 0.2), turns: 3 };
+      specialEffect = 'dot';
+    } else if (move.special === 'harden') {
+      atk.hardened = 2;
+      specialEffect = 'harden';
     }
+
+    // Signature self-damage (Overclock Omega, VRAM Supernova, etc.)
+    if (move.selfDamage && move.selfDamage > 0) {
+      const sigSelfDmg = Math.round(atk.maxHp * move.selfDamage);
+      atk.hp = Math.max(1, atk.hp - sigSelfDmg);
+      selfDmg += sigSelfDmg;
+    }
+
+    // Set cooldown for the move if it has one
+    if (move.cooldown && move.cooldown > 0) {
+      atk.cooldowns[move.name] = move.cooldown;
+    }
+
+    // Determine category effectiveness label for UI
+    let categoryEffect = null;
+    if (categoryMult > 1.0) categoryEffect = 'super_effective';
+    else if (categoryMult < 1.0) categoryEffect = 'not_effective';
 
     const attackEvent = {
       type: 'attack', who, target: defender, turn: state.turn,
       move: move.name, label: move.label, flavor: move.desc,
-      category: move.cat, damage, isCrit, specialEffect,
+      category: move.cat, damage, isCrit, specialEffect, categoryEffect,
       hpA: state.a.hp, hpB: state.b.hp,
       maxHpA: state.a.maxHp, maxHpB: state.b.maxHp,
     };

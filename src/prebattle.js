@@ -5,7 +5,7 @@
 
 const { colors, RESET, rgb } = require('./palette');
 const { getOwnedItems, RARITY_COLORS } = require('./items');
-const { getAvailableMoves, getEquippedMoves, saveLoadout, resolveMoveNames } = require('./moveset');
+const { getAvailableMoves, getEquippedMoves, saveLoadout, resolveMoveNames, MOVESET_SLOTS } = require('./moveset');
 const { SIGNATURE_COLOR, SIGNATURE_ACCENT, SIGNATURE_ICON } = require('./signature');
 const { registerSignatureAnims } = require('./effects/projectile');
 const { getBenchmarkSummaryLines } = require('./benchmark');
@@ -18,13 +18,13 @@ const CAT_COLORS = {
 };
 
 // ─── Main pre-battle menu ───
-// Returns the final equipped moves array (always 4)
+// Returns the final equipped moves array (always 6)
 function normalizeEquippedMoves(fighter, movesOrNames) {
   const names = Array.isArray(movesOrNames)
     ? movesOrNames.map(move => typeof move === 'string' ? move : move?.name).filter(Boolean)
     : [];
   const resolved = resolveMoveNames(names, fighter.stats, fighter.specs, fighter.archetype);
-  if (resolved.length === 4) return resolved;
+  if (resolved.length === 6) return resolved;
   return getEquippedMoves(fighter.stats, fighter.specs, fighter.archetype);
 }
 
@@ -75,32 +75,38 @@ function mainMenu(myFighter, opponent, equippedMoves, screen) {
       // Divider
       screen.hline(2, cardY + 5, w - 4, '─', colors.dimmer);
 
-      // Equipped moves preview (4 moves — signature ones get special styling)
+      // Equipped moves preview — two columns if more than 3
       screen.text(leftX, cardY + 6, 'EQUIPPED MOVES:', colors.dim);
+      const movesPerCol = Math.ceil(equippedMoves.length / 2);
       equippedMoves.forEach((m, i) => {
-        const y = cardY + 7 + i;
+        const col = i < movesPerCol ? 0 : 1;
+        const row = i < movesPerCol ? i : i - movesPerCol;
+        const mx = leftX + 2 + col * (Math.floor(w / 2) - 6);
+        const y = cardY + 7 + row;
+        const num = `${i + 1}. `;
         if (m.signature) {
-          screen.text(leftX + 2, y, SIGNATURE_ICON, SIGNATURE_COLOR, null, true);
-          screen.text(leftX + 4, y, m.label, SIGNATURE_COLOR, null, true);
-          screen.text(leftX + 26, y, 'SIGNATURE', SIGNATURE_ACCENT);
+          screen.text(mx, y, num, SIGNATURE_COLOR);
+          screen.text(mx + num.length, y, SIGNATURE_ICON, SIGNATURE_COLOR, null, true);
+          screen.text(mx + num.length + 2, y, m.label.slice(0, 20), SIGNATURE_COLOR, null, true);
         } else {
           const catColor = CAT_COLORS[m.cat] || colors.dim;
-          screen.text(leftX + 2, y, `${i + 1}. ${m.label}`, colors.white);
-          screen.text(leftX + 26, y, m.cat, catColor);
+          screen.text(mx, y, `${num}${m.label.slice(0, 20)}`, colors.white);
+          screen.text(mx + 24, y, m.cat, catColor);
         }
       });
 
-      // Bag count
+      // Bag count + conditions on right
+      const infoY = cardY + 7 + movesPerCol;
       const bagCount = getOwnedItems().reduce((s, i) => s + i.count, 0);
-      screen.text(rightX, cardY + 6, `BAG: ${bagCount} items`, colors.dim);
-      screen.text(rightX, cardY + 7, 'LIVE CONDITIONS:', colors.dim);
+      screen.text(leftX, infoY + 1, `BAG: ${bagCount} items`, colors.dim);
       const benchLines = getBenchmarkSummaryLines(myFighter.benchmark, 3);
+      screen.text(leftX + 20, infoY + 1, 'LIVE CONDITIONS:', colors.dim);
       benchLines.forEach((line, index) => {
-        screen.text(rightX, cardY + 8 + index, line.text.slice(0, 32), line.color);
+        screen.text(leftX + 20, infoY + 2 + index, line.text.slice(0, 32), line.color);
       });
 
       // Menu options
-      const menuY = cardY + 12;
+      const menuY = infoY + Math.max(benchLines.length + 3, 4);
       screen.hline(2, menuY - 1, w - 4, '─', colors.dimmer);
 
       for (let i = 0; i < options.length; i++) {
@@ -170,7 +176,7 @@ function mainMenu(myFighter, opponent, equippedMoves, screen) {
   });
 }
 
-// ─── Loadout picker — toggle moves on/off, exactly 4 ───
+// ─── Loadout picker — toggle moves on/off, exactly 6 ───
 // Includes signature moves at the top of the pool with special styling
 function pickLoadout(fighter, screen, currentEquipped) {
   return new Promise((resolve) => {
@@ -191,7 +197,7 @@ function pickLoadout(fighter, screen, currentEquipped) {
 
       screen.centerText(0, '─'.repeat(w), colors.dimmer);
       screen.centerText(0, ' C H O O S E   M O V E S ', colors.lavender, null, true);
-      screen.text(4, 1, `Selected: ${selected.size}/4`, selected.size === 4 ? colors.mint : colors.rose, null, true);
+      screen.text(4, 1, `Selected: ${selected.size}/6`, selected.size === 6 ? colors.mint : colors.rose, null, true);
       screen.text(w - 30, 1, 'SPACE=toggle  ENTER=confirm', colors.dimmer);
 
       const startIdx = Math.max(0, cursor - pageSize + 3);
@@ -224,23 +230,26 @@ function pickLoadout(fighter, screen, currentEquipped) {
             screen.text(41, y, m.desc.slice(0, 20), colors.dimmer);
           }
         } else {
-          // Regular moves: original styling
+          // Regular moves: show tier + category
           const catColor = CAT_COLORS[m.cat] || colors.dim;
           const marker = isSelected ? '★' : '·';
           const markerColor = isSelected ? colors.gold : colors.dimmer;
+          const tierLabel = m.tier === 'component' ? 'COMPONENT' : 'UNIVERSAL';
+          const tierColor = m.tier === 'component' ? colors.sky : colors.dim;
+          const cdLabel = m.cooldown > 0 ? ` cd:${m.cooldown}` : '';
 
           if (isCursor) {
             screen.text(3, y, '▸', colors.white, null, true);
             screen.text(5, y, marker, markerColor, null, true);
             screen.text(7, y, m.label.padEnd(22), colors.white, null, true);
-            screen.text(30, y, m.cat.padEnd(10), catColor, null, true);
-            screen.text(41, y, m.desc.slice(0, 20), catColor);
-            screen.text(63, y, `${m.base.toUpperCase()} x${m.mult}`, colors.dim);
+            screen.text(30, y, tierLabel.padEnd(10), tierColor, null, true);
+            screen.text(41, y, m.desc.slice(0, 18), catColor);
+            screen.text(60, y, `${m.base.toUpperCase()} x${m.mult}${cdLabel}`, colors.dim);
           } else {
             screen.text(5, y, marker, markerColor);
             screen.text(7, y, m.label.padEnd(22), isSelected ? colors.white : colors.dim);
-            screen.text(30, y, m.cat.padEnd(10), isSelected ? catColor : colors.dimmer);
-            screen.text(41, y, m.desc.slice(0, 20), colors.dimmer);
+            screen.text(30, y, tierLabel.padEnd(10), isSelected ? tierColor : colors.dimmer);
+            screen.text(41, y, m.desc.slice(0, 18), colors.dimmer);
           }
         }
       }
@@ -256,23 +265,23 @@ function pickLoadout(fighter, screen, currentEquipped) {
         cursor = (cursor + 1) % available.length;
         render();
       } else if (key === ' ') {
-        // Toggle selection
+        // Toggle selection — allow deselecting even if over 4 (stale loadout)
         const m = available[cursor];
         if (selected.has(m.name)) {
           selected.delete(m.name);
-        } else if (selected.size < 4) {
+        } else if (selected.size < 6) {
           selected.add(m.name);
         }
         render();
       } else if (key === '\r' || key === '\n') {
-        if (selected.size === 4) {
+        if (selected.size === 6) {
           const names = [...selected];
           saveLoadout(names);
           cleanup();
           const moves = normalizeEquippedMoves(fighter, names);
           resolve(moves);
         }
-        // If not 4 selected, do nothing (can't confirm)
+        // If not 6 selected, do nothing (can't confirm)
       } else if (key === '\x1b' || key === 'q') {
         // Cancel — return current equipped unchanged
         cleanup();

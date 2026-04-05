@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-// MOVE SELECTION UI — Arrow keys to cycle, Enter to confirm
-// Includes BAG option for using items mid-battle
+// MOVE SELECTION UI — 2-column layout with cooldown indicators
+// Arrow keys to navigate, Enter to confirm. BAG on bottom row.
 // Supports background animation via onTick callback
 // ═══════════════════════════════════════════════════════════════
 
@@ -25,22 +25,22 @@ const CAT_ICONS = {
 
 // Main move selection — returns { type: 'move', move } or { type: 'item', item }
 // onTick: optional callback called at ~20fps to animate background scene.
-//   If provided, selectMove will NOT call screen.render() itself —
-//   it writes its UI to the buffer and onTick's caller handles rendering.
 function selectMove(moves, screen, logX, logY, logW, logH, onTick) {
   return new Promise((resolve) => {
-    let cursor = 0;
+    let cursorRow = 0;  // 0-2 = move rows, 3 = BAG
+    let cursorCol = 0;  // 0 = left, 1 = right
     let mode = 'moves';   // 'moves' or 'bag'
     let bagItems = [];
-    const totalSlots = moves.length + 1;  // moves + BAG option
+    let bagCursor = 0;
     let done = false;
+
+    function getCursorIndex() { return cursorRow * 2 + cursorCol; }
 
     const stdin = process.stdin;
     stdin.setRawMode(true);
     stdin.resume();
     stdin.setEncoding('utf8');
 
-    // Draw the move selection UI into the log area of the screen buffer
     function drawMoveUI() {
       // Clear the log area
       for (let row = 0; row < logH; row++) {
@@ -52,43 +52,38 @@ function selectMove(moves, screen, logX, logY, logW, logH, onTick) {
       if (mode === 'moves') {
         screen.text(logX + 1, logY, '╸ SELECT YOUR MOVE ╺', colors.gold, null, true);
 
-        for (let i = 0; i < moves.length; i++) {
-          const m = moves[i];
-          const y = logY + 1 + i;
-          const selected = i === cursor;
+        const colW = Math.floor((logW - 2) / 2);
+        const rightColX = logX + colW + 2;
 
-          if (m.signature) {
-            // Signature moves get gold/amber treatment
-            if (selected) {
-              screen.text(logX + 1, y, '▸', SIGNATURE_COLOR, null, true);
-              screen.text(logX + 3, y, SIGNATURE_ICON, SIGNATURE_COLOR, null, true);
-              screen.text(logX + 5, y, m.label.padEnd(20), SIGNATURE_COLOR, null, true);
-              screen.text(logX + 26, y, m.desc, SIGNATURE_ACCENT);
-            } else {
-              screen.text(logX + 3, y, SIGNATURE_ICON, SIGNATURE_ACCENT);
-              screen.text(logX + 5, y, m.label.padEnd(20), SIGNATURE_ACCENT);
-              screen.text(logX + 26, y, m.desc, rgb(180, 140, 50));
-            }
-          } else {
-            const icon = CAT_ICONS[m.cat] || '·';
-            const catColor = CAT_COLORS[m.cat] || colors.dim;
+        // 2-column: left col = indices 0,2,4  right col = 1,3,5
+        for (let row = 0; row < 3; row++) {
+          const y = logY + 1 + row;
+          for (let col = 0; col < 2; col++) {
+            const idx = row * 2 + col;
+            if (idx >= moves.length) continue;
+            const m = moves[idx];
+            const x = col === 0 ? logX : rightColX;
+            const selected = cursorRow === row && cursorCol === col;
+            const isSig = m.signature;
+            const icon = isSig ? SIGNATURE_ICON : (CAT_ICONS[m.cat] || '·');
+            const baseColor = isSig ? SIGNATURE_COLOR : (CAT_COLORS[m.cat] || colors.dim);
+            const dimColor = isSig ? SIGNATURE_ACCENT : colors.dimmer;
+            const labelW = colW - 6;
 
             if (selected) {
-              screen.text(logX + 1, y, '▸', colors.white, null, true);
-              screen.text(logX + 3, y, icon, catColor, null, true);
-              screen.text(logX + 5, y, m.label.padEnd(20), colors.white, null, true);
-              screen.text(logX + 26, y, m.desc, catColor);
+              screen.text(x + 1, y, '▸', colors.white, null, true);
+              screen.text(x + 3, y, icon, baseColor, null, true);
+              screen.text(x + 5, y, m.label.slice(0, labelW).padEnd(labelW), colors.white, null, true);
             } else {
-              screen.text(logX + 3, y, icon, colors.dimmer);
-              screen.text(logX + 5, y, m.label.padEnd(20), colors.dim);
-              screen.text(logX + 26, y, m.desc, colors.dimmer);
+              screen.text(x + 3, y, icon, dimColor);
+              screen.text(x + 5, y, m.label.slice(0, labelW).padEnd(labelW), isSig ? SIGNATURE_ACCENT : colors.dim);
             }
           }
         }
 
-        // BAG option
-        const bagY = logY + 1 + moves.length;
-        const bagSelected = cursor === moves.length;
+        // BAG row
+        const bagY = logY + 4;
+        const bagSelected = cursorRow === 3;
         const ownedCount = getOwnedItems().reduce((s, i) => s + i.count, 0);
         if (bagSelected) {
           screen.text(logX + 1, bagY, '▸', colors.white, null, true);
@@ -107,29 +102,26 @@ function selectMove(moves, screen, logX, logY, logW, logH, onTick) {
         if (bagItems.length === 0) {
           screen.text(logX + 3, logY + 1, 'Bag is empty! Win battles to earn items.', colors.dim);
         } else {
-          const ITEM_HEIGHT = ART_H + 1; // 3 art lines + 1 gap
+          const ITEM_HEIGHT = ART_H + 1;
           const maxVisible = Math.max(1, Math.floor((logH - 1) / ITEM_HEIGHT));
-          // Scroll window follows cursor
           let scrollStart = 0;
-          if (cursor >= scrollStart + maxVisible) scrollStart = cursor - maxVisible + 1;
-          if (cursor < scrollStart) scrollStart = cursor;
+          if (bagCursor >= scrollStart + maxVisible) scrollStart = bagCursor - maxVisible + 1;
+          if (bagCursor < scrollStart) scrollStart = bagCursor;
           const endIdx = Math.min(bagItems.length, scrollStart + maxVisible);
 
           for (let i = scrollStart; i < endIdx; i++) {
             const item = bagItems[i];
             const slot = i - scrollStart;
             const baseY = logY + 1 + slot * ITEM_HEIGHT;
-            const selected = i === cursor;
+            const selected = i === bagCursor;
             const rc = RARITY_COLORS[item.rarity] || colors.dim;
             const art = getItemArt(item.id);
 
-            // Draw art sprite
             if (art) {
               const artColor = selected ? art.colors : [colors.dimmer, colors.dimmer, colors.dimmer];
               drawArt(screen, logX + 3, baseY, art.lines, artColor);
             }
 
-            // Item info to the right of art
             const infoX = logX + 11;
             if (selected) {
               screen.text(logX + 1, baseY, '▸', colors.white, null, true);
@@ -143,27 +135,22 @@ function selectMove(moves, screen, logX, logY, logW, logH, onTick) {
             }
           }
 
-          // Scroll indicators
-          if (scrollStart > 0) {
-            screen.text(logX + logW - 3, logY, '▲', colors.dim);
-          }
-          if (endIdx < bagItems.length) {
-            screen.text(logX + logW - 3, logY + logH - 1, '▼', colors.dim);
-          }
+          if (scrollStart > 0) screen.text(logX + logW - 3, logY, '▲', colors.dim);
+          if (endIdx < bagItems.length) screen.text(logX + logW - 3, logY + logH - 1, '▼', colors.dim);
         }
       }
     }
 
-    // Background animation loop — runs at ~20fps if onTick provided
+    // Background animation loop
     let animTimer = null;
     function startAnim() {
       if (!onTick) return;
-      const TICK = 50; // 20fps
+      const TICK = 50;
       function tick() {
         if (done) return;
         const tickStart = Date.now();
-        onTick();        // draw background scene (matrix rain, sprites, etc.)
-        drawMoveUI();    // overlay move selection UI
+        onTick();
+        drawMoveUI();
         screen.render();
         const elapsed = Date.now() - tickStart;
         animTimer = setTimeout(tick, Math.max(0, TICK - elapsed));
@@ -177,52 +164,75 @@ function selectMove(moves, screen, logX, logY, logW, logH, onTick) {
 
     function onKey(key) {
       if (done) return;
-      if (key === '\x1b[A' || key === 'k') {
-        const max = mode === 'moves' ? totalSlots : bagItems.length;
-        if (max > 0) cursor = (cursor - 1 + max) % max;
-      } else if (key === '\x1b[B' || key === 'j') {
-        const max = mode === 'moves' ? totalSlots : bagItems.length;
-        if (max > 0) cursor = (cursor + 1) % max;
-      } else if (key === '\r' || key === '\n' || key === ' ') {
-        if (mode === 'moves') {
-          if (cursor < moves.length) {
-            done = true;
-            stopAnim();
-            cleanup();
-            resolve({ type: 'move', move: moves[cursor] });
-            return;
+
+      if (mode === 'moves') {
+        const numMoves = moves.length;
+        if (key === '\x1b[A' || key === 'k') {
+          if (cursorRow > 0) cursorRow--;
+          if (cursorRow < 3 && getCursorIndex() >= numMoves) cursorCol = 0;
+        } else if (key === '\x1b[B' || key === 'j') {
+          if (cursorRow < 3) cursorRow++;
+          if (cursorRow < 3 && getCursorIndex() >= numMoves) cursorCol = 0;
+        } else if (key === '\x1b[C' || key === 'l') {
+          if (cursorRow < 3) {
+            if (cursorCol === 0 && cursorRow * 2 + 1 < numMoves) cursorCol = 1;
           } else {
             bagItems = getOwnedItems();
             mode = 'bag';
-            cursor = 0;
+            bagCursor = 0;
           }
-        } else if (mode === 'bag') {
-          if (bagItems.length > 0 && cursor < bagItems.length) {
+        } else if (key === '\x1b[D' || key === 'h') {
+          if (cursorRow < 3) cursorCol = 0;
+        } else if (key === '\r' || key === '\n' || key === ' ') {
+          if (cursorRow === 3) {
+            bagItems = getOwnedItems();
+            mode = 'bag';
+            bagCursor = 0;
+          } else {
+            const idx = getCursorIndex();
+            if (idx < numMoves) {
+              done = true;
+              stopAnim();
+              cleanup();
+              resolve({ type: 'move', move: moves[idx] });
+              return;
+            }
+          }
+        } else if (key === '\x03') {
+          done = true;
+          stopAnim();
+          cleanup();
+          process.exit(0);
+        }
+      } else if (mode === 'bag') {
+        if (key === '\x1b[A' || key === 'k') {
+          if (bagItems.length > 0) bagCursor = (bagCursor - 1 + bagItems.length) % bagItems.length;
+        } else if (key === '\x1b[B' || key === 'j') {
+          if (bagItems.length > 0) bagCursor = (bagCursor + 1) % bagItems.length;
+        } else if (key === '\r' || key === '\n' || key === ' ') {
+          if (bagItems.length > 0 && bagCursor < bagItems.length) {
             done = true;
             stopAnim();
             cleanup();
-            resolve({ type: 'item', item: bagItems[cursor] });
+            resolve({ type: 'item', item: bagItems[bagCursor] });
             return;
           }
-        }
-      } else if (key === '\x1b' || key === 'q') {
-        if (mode === 'bag') {
+        } else if (key === '\x1b' || key === 'q' || key === '\x1b[D' || key === 'h') {
           mode = 'moves';
-          cursor = moves.length;
+          cursorRow = 3;
+          cursorCol = 0;
+        } else if (key === '\x03') {
+          done = true;
+          stopAnim();
+          cleanup();
+          process.exit(0);
         }
-      } else if (key === '\x03') {
-        done = true;
-        stopAnim();
-        cleanup();
-        process.exit(0);
       }
 
-      // If no onTick, render immediately on key press (fallback)
       if (!onTick) {
         drawMoveUI();
         screen.render();
       }
-      // With onTick, the animation loop handles rendering on next tick
     }
 
     function cleanup() {
@@ -233,7 +243,6 @@ function selectMove(moves, screen, logX, logY, logW, logH, onTick) {
 
     stdin.on('data', onKey);
 
-    // Initial render
     if (onTick) {
       onTick();
       drawMoveUI();

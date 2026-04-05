@@ -84,7 +84,9 @@ const MENU_ITEMS = [
   { key: 'demo',        label: 'QUICK BATTLE',    desc: 'Auto-battle vs Chromebook',  icon: '⚡' },
   { key: 'demo_turns',  label: 'TURN BATTLE',     desc: 'Turn-based vs Chromebook',   icon: '◆' },
   { key: 'dash',        label: 'DASH MODE',       desc: 'Side-scroll obstacle runner', icon: '▸' },
+  { key: 'hackgrid',    label: 'HACK THE GRID',   desc: 'Dodge sentries, grab data',   icon: '⌬' },
   { key: 'rogue',       label: 'SOLO MODE',       desc: 'Explore the void, find battles', icon: '◉' },
+  { key: 'gym',         label: 'GYM LADDER',      desc: 'Fight gym leaders in order',    icon: '▲' },
   { key: 'profile',     label: 'MY PROFILE',      desc: 'View your fighter stats',    icon: '◈' },
   { key: 'loadout',     label: 'LOADOUT',          desc: 'Configure equipped moves',   icon: '⚔' },
   { key: 'bag',         label: 'BAG',              desc: 'View collected items',       icon: '◰' },
@@ -92,6 +94,8 @@ const MENU_ITEMS = [
   { key: 'skins',       label: 'SKIN LOCKER',      desc: 'View & equip Transcendent skins', icon: '✧' },
   { key: 'lootbox',     label: 'LOOT BOX',         desc: 'Spend credits on crates',    icon: '✦' },
   { key: 'market',      label: 'MARKET',            desc: 'Trade skins with players',   icon: '⇌' },
+  { key: 'kerneldex',   label: 'KERNELDEX',        desc: 'Rigs you\'ve scanned',       icon: '◈' },
+  { key: 'guide',       label: 'GUIDE',            desc: 'Combat basics & matchups',   icon: '?' },
   { key: 'history',     label: 'BATTLE LOG',       desc: 'Past match history',         icon: '▤' },
   { key: 'host',        label: 'HOST GAME',        desc: 'Host a battle for others',   icon: '◎' },
   { key: 'join',        label: 'JOIN BATTLE',      desc: 'Enter a room code to join',  icon: '↗' },
@@ -103,6 +107,8 @@ const ITEM_COLORS = {
   demo_turns:  colors.gold,
   dash:        colors.coral,
   rogue:       rgb(75, 150, 90),
+  gym:         rgb(255, 180, 60),
+  hackgrid:    rgb(0, 255, 180),
   profile:     colors.cyan,
   loadout:     colors.lavender,
   bag:         colors.mint,
@@ -110,6 +116,8 @@ const ITEM_COLORS = {
   skins:       rgb(200, 120, 255),
   lootbox:     rgb(240, 170, 50),
   market:      rgb(180, 220, 140),
+  kerneldex:   rgb(130, 220, 235),
+  guide:       rgb(180, 210, 255),
   history:     colors.dim,
   host:        colors.coral,
   join:        colors.lilac,
@@ -130,7 +138,7 @@ const MENU_GROUPS = [
     desc: 'Modes, multiplayer, and match types',
     icon: '>',
     defaultExpanded: true,
-    items: ['rogue', 'host', 'join', 'dash'],
+    items: ['rogue', 'gym', 'host', 'join', 'dash', 'hackgrid'],
   },
   {
     type: 'section',
@@ -150,7 +158,7 @@ const MENU_GROUPS = [
     desc: 'Loot, battle log, and future extras',
     icon: '.',
     defaultExpanded: false,
-    items: ['demo', 'demo_turns', 'lootbox', 'market', 'history'],
+    items: ['guide', 'demo', 'demo_turns', 'kerneldex', 'lootbox', 'market', 'history'],
   },
   { type: 'item', key: 'quit' },
 ];
@@ -257,6 +265,11 @@ async function prepareBenchToBattle(fighter, opponent = null) {
 function postBattle(myFighter, opponent, winner, mode) {
   saveMatch(myFighter, opponent, winner, mode);
 
+  // Kerneldex: scan opponent rig
+  const { scanRig, recordResult } = require('../src/rigdex');
+  const { isNew } = scanRig(opponent);
+  recordResult(opponent, winner === 'a');
+
   const { calculateBattleCredits, addCredits } = require('../src/credits');
   const earned = calculateBattleCredits(winner, myFighter, opponent, mode);
   const newBal = addCredits(earned);
@@ -284,7 +297,7 @@ function postBattle(myFighter, opponent, winner, mode) {
     }
   }
 
-  return { earned, newBal, itemDrop };
+  return { earned, newBal, itemDrop, newRigScanned: isNew, rigName: opponent.name };
 }
 
 // ─── Animated battle reward screen ───
@@ -324,18 +337,29 @@ async function showBattleRewards(winner, rewards, winMsg, loseMsg) {
   await sleep(400);
 
   // Phase 3: Item drop reveal
+  let nextLine = cy + 3;
   if (itemDrop) {
     const rc = RARITY_COLORS[itemDrop.rarity] || colors.dim;
-    // Flash
     for (let f = 0; f < 4; f++) {
-      scr.centerText(cy + 3, f % 2 === 0 ? '▸ ITEM DROP ◂' : '             ', colors.mint, null, true);
+      scr.centerText(nextLine, f % 2 === 0 ? '▸ ITEM DROP ◂' : '             ', colors.mint, null, true);
       scr.render();
       await sleep(100);
     }
-    scr.centerText(cy + 3, '▸ ITEM DROP ◂', colors.mint, null, true);
-    scr.centerText(cy + 4, `${itemDrop.icon}  ${itemDrop.name}  (${itemDrop.rarity})`, rc, null, true);
+    scr.centerText(nextLine, '▸ ITEM DROP ◂', colors.mint, null, true);
+    scr.centerText(nextLine + 1, `${itemDrop.icon}  ${itemDrop.name}  (${itemDrop.rarity})`, rc, null, true);
+    nextLine += 3;
     scr.render();
     await sleep(500);
+  }
+
+  // Phase 4: Kerneldex scan notification
+  if (rewards.newRigScanned) {
+    const { getDexCount } = require('../src/rigdex');
+    const total = getDexCount();
+    scr.centerText(nextLine, '◈ NEW RIG SCANNED ◈', rgb(130, 220, 235), null, true);
+    scr.centerText(nextLine + 1, `${rewards.rigName} added to Kerneldex  (${total} total)`, colors.dim);
+    scr.render();
+    await sleep(600);
   }
 
   scr.hline(2, h - 4, w - 4, '─', colors.ghost);
@@ -850,6 +874,224 @@ async function mainMenu(sessionState = {}) {
 // ACTION HANDLERS
 // ═══════════════════════════════════════════════════════════════
 
+// ─── Guide — scrollable combat reference ───
+
+async function handleGuide() {
+  const { ARCHETYPE_EFFECTIVENESS } = require('../src/balance');
+
+  // Build guide content as lines: { text, color, bold }
+  const C = {
+    h1: rgb(255, 215, 0),     // gold headers
+    h2: rgb(180, 210, 255),    // blue sub-headers
+    txt: colors.dim,           // body text
+    hi: colors.white,          // highlighted text
+    grn: rgb(100, 220, 140),   // positive / strength
+    red: rgb(240, 120, 120),   // weakness
+    orn: rgb(255, 180, 60),    // medium / neutral
+    sky: rgb(130, 200, 240),   // info
+    lav: colors.lavender,      // magic
+    pch: colors.peach,         // physical
+  };
+
+  const lines = [];
+  const L = (text, color, bold) => lines.push({ text: text || '', color: color || C.txt, bold: !!bold });
+  const blank = () => L('');
+
+  // ── Title ──
+  L('╔═══════════════════════════════════════════╗', C.h1);
+  L('║           K E R N E L M O N   G U I D E  ║', C.h1, true);
+  L('╚═══════════════════════════════════════════╝', C.h1);
+  blank();
+
+  // ── Move Categories ──
+  L('⚔  MOVE CATEGORIES', C.h1, true);
+  L('─────────────────────────────', C.h1);
+  L('Every attack belongs to one of four categories:', C.txt);
+  blank();
+  L('  ⚔ PHYSICAL  — CPU-powered brute force. Uses STR stat.', C.pch);
+  L('  ◆ MAGIC     — GPU compute blasts. Uses MAG stat.', C.lav);
+  L('  » SPEED     — Storage/IO burst strikes. Uses SPD stat.', C.sky);
+  L('  ★ SPECIAL   — Utility: heals, stun, debuff, pierce. Mixed stats.', C.orn);
+  blank();
+  L('Special moves are always neutral — no type advantage or disadvantage.', C.txt);
+  blank();
+
+  // ── Move Tiers ──
+  L('◆  MOVE TIERS', C.h1, true);
+  L('─────────────────────────────', C.h1);
+  L('  UNIVERSAL   — Available to all fighters. Low power, no cooldown.', C.txt);
+  L('  COMPONENT   — Locked to your hardware brand. Medium-high power.', C.sky);
+  L('                (AMD/Intel CPU, NVIDIA/Radeon GPU, NVMe/SSD/HDD, etc.)', C.txt);
+  L('  SIGNATURE   — Your 2 unique moves. Highest power, 3-turn cooldown.', C.h1);
+  blank();
+  L('You equip 6 moves total: 2 signature + 4 from your available pool.', C.txt);
+  blank();
+
+  // ── Cooldowns ──
+  L('⏱  COOLDOWNS', C.h1, true);
+  L('─────────────────────────────', C.h1);
+  L('After using a move with a cooldown, it\'s locked for N turns.', C.txt);
+  L('The number [N] appears next to it. You must pick other moves.', C.txt);
+  blank();
+  L('  Signature moves: 3-turn cooldown', C.red);
+  L('  High-power component moves: 2-turn cooldown', C.orn);
+  L('  Universal / basic moves: no cooldown', C.grn);
+  blank();
+  L('Cooldown starts even if the attack is dodged. Plan accordingly.', C.txt);
+  blank();
+
+  // ── Category Effectiveness ──
+  L('!!  CATEGORY EFFECTIVENESS', C.h1, true);
+  L('─────────────────────────────', C.h1);
+  L('Each archetype has a weakness and resistance to move categories.', C.txt);
+  L('When selecting moves, you\'ll see hints:', C.txt);
+  blank();
+  L('  !!  = Super effective (1.25x damage)', C.grn, true);
+  L('  ..  = Not very effective (0.8x damage)', C.red);
+  L('  (no icon) = Neutral (1.0x damage)', C.txt);
+  blank();
+  L('Read your opponent\'s archetype before picking moves!', C.hi, true);
+  blank();
+
+  // ── Archetype Matchup Chart ──
+  L('▲  ARCHETYPE MATCHUPS', C.h1, true);
+  L('─────────────────────────────', C.h1);
+  blank();
+
+  const archetypeInfo = [
+    { name: 'STACK_SMASHER', alias: 'Berserker',  style: 'High damage + crit, risky self-harm on crit' },
+    { name: 'SHADER_WITCH',  alias: 'Arcmage',    style: 'Devastating magic, but chance to fizzle' },
+    { name: 'ZERO_DAY',      alias: 'Blitz',      style: 'Huge turn-1 damage that fades each round' },
+    { name: 'MALLOC_WALL',   alias: 'Fortress',   style: 'Tank — reduced damage dealt, massive defense' },
+    { name: 'FORK_BOMB',     alias: 'Hivemind',   style: 'Multi-core power, but always acts second' },
+    { name: 'GHOST_PROC',    alias: 'Phantom',    style: 'High dodge rate, fragile when hit' },
+    { name: 'ROOT_GOD',      alias: 'Titan',      style: 'Burst damage, consecutive attacks risk stalling' },
+  ];
+
+  for (const arch of archetypeInfo) {
+    const eff = ARCHETYPE_EFFECTIVENESS[arch.name] || {};
+    L('  ' + arch.alias.toUpperCase() + ' (' + arch.name + ')', C.h2, true);
+    L('    ' + arch.style, C.txt);
+    if (eff.weak) {
+      L('    Weak to: ' + eff.weak.toUpperCase() + ' (take 1.25x)', C.red);
+    }
+    if (eff.resist) {
+      L('    Resists: ' + eff.resist.toUpperCase() + ' (take 0.8x)', C.grn);
+    }
+    blank();
+  }
+
+  // Neutral archetypes
+  L('  NEUTRAL ARCHETYPES (no weakness or resistance):', C.h2, true);
+  L('    KERNEL_GOD (Apex) — Consistent output, passive HP regen', C.txt);
+  L('    SSH_DRIFTER (Nomad) — Starts weak, scales stronger each turn', C.txt);
+  L('    SEG_FAULT (Scrapper) — Comeback mechanic below 50% HP', C.txt);
+  L('    DAEMON (Sentinel) — Low variance, steady and reliable', C.txt);
+  blank();
+
+  // ── Quick Reference ──
+  L('⚡  QUICK MATCHUP REFERENCE', C.h1, true);
+  L('─────────────────────────────', C.h1);
+  L('  "What moves should I bring against...?"', C.txt);
+  blank();
+  L('  vs Berserker / Hivemind / Fortress → bring MAGIC moves', C.lav, true);
+  L('  vs Arcmage / Blitz / Titan         → bring SPEED moves', C.sky, true);
+  L('  vs Blitz / Phantom                 → bring PHYSICAL moves', C.pch, true);
+  L('  vs Apex / Nomad / Scrapper / Daemon → any category works', C.orn);
+  blank();
+
+  // ── Special Effects ──
+  L('★  SPECIAL EFFECTS', C.h1, true);
+  L('─────────────────────────────', C.h1);
+  L('  STUN    — Opponent skips their next turn (60% proc chance)', C.red);
+  L('  DEBUFF  — Opponent deals 60% damage next attack', C.orn);
+  L('  PIERCE  — Ignores opponent\'s defense stat entirely', C.sky);
+  L('  HARDEN  — Boosts your defense by 40% for 2 turns', C.grn);
+  L('  DOT     — Burns the opponent for 20% of hit damage over 3 turns', C.h1);
+  L('  HEAL    — Restore HP based on your VIT stat', C.grn);
+  blank();
+
+  // ── Tips ──
+  L('?  TIPS', C.h1, true);
+  L('─────────────────────────────', C.h1);
+  L('  • Check your opponent\'s archetype in the pre-battle lobby', C.txt);
+  L('  • Equip moves that exploit their weakness category', C.txt);
+  L('  • Don\'t spam your signature — use it when cooldowns align', C.txt);
+  L('  • HARDEN before a big hit you can\'t dodge', C.txt);
+  L('  • DOT moves are best early — they deal damage over 3 extra turns', C.txt);
+  L('  • Against tanks (Fortress), use PIERCE to bypass their defense', C.txt);
+  L('  • Against Blitz, survive turns 1-3 — their damage fades fast', C.txt);
+
+  // ── Render with scrolling ──
+  return new Promise((resolve) => {
+    const scr = new Screen();
+    scr.enter();
+    const w = scr.width;
+    const h = scr.height;
+    let scroll = 0;
+    const visibleRows = h - 4; // header + footer
+
+    const stdin = process.stdin;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+
+    function render() {
+      scr.clear();
+
+      // Header
+      scr.centerText(0, '─'.repeat(w), colors.dimmer);
+      scr.centerText(0, ' G U I D E ', rgb(180, 210, 255), null, true);
+      scr.text(w - 20, 0, `${scroll + 1}-${Math.min(scroll + visibleRows, lines.length)}/${lines.length}`, colors.dimmer);
+
+      // Content
+      for (let i = 0; i < visibleRows && scroll + i < lines.length; i++) {
+        const line = lines[scroll + i];
+        scr.text(3, 2 + i, (line.text || '').slice(0, w - 6), line.color || C.txt, null, line.bold);
+      }
+
+      // Scroll indicators
+      if (scroll > 0) scr.text(w - 2, 2, '▲', colors.dim);
+      if (scroll + visibleRows < lines.length) scr.text(w - 2, h - 3, '▼', colors.dim);
+
+      // Footer
+      scr.hline(2, h - 2, w - 4, '─', colors.ghost);
+      scr.text(4, h - 2, ' ↑↓ scroll  Esc/q return ', colors.dim);
+
+      scr.render();
+    }
+
+    function onKey(key) {
+      const maxScroll = Math.max(0, lines.length - visibleRows);
+      if (key === '\x1b[A' || key === 'k' || key === 'w') {
+        scroll = Math.max(0, scroll - 1);
+        render();
+      } else if (key === '\x1b[B' || key === 'j' || key === 's') {
+        scroll = Math.min(maxScroll, scroll + 1);
+        render();
+      } else if (key === '\x1b[5~') { // Page Up
+        scroll = Math.max(0, scroll - visibleRows);
+        render();
+      } else if (key === '\x1b[6~') { // Page Down
+        scroll = Math.min(maxScroll, scroll + visibleRows);
+        render();
+      } else if (key === '\x1b' || key === 'q' || key === '\r' || key === '\n') {
+        stdin.removeListener('data', onKey);
+        stdin.setRawMode(false);
+        stdin.pause();
+        scr.exit();
+        resolve();
+      } else if (key === '\x03') {
+        scr.exit();
+        process.exit(0);
+      }
+    }
+
+    stdin.on('data', onKey);
+    render();
+  });
+}
+
 // Show content in alt screen, wait for keypress to dismiss
 async function showInfoScreen(title, renderFn) {
   const infoScreen = new Screen();
@@ -914,7 +1156,7 @@ async function handleDemo(fighter, turnMode, sessionState) {
     if (turnMode && renderTurnBattle) {
       myMoves = getEquippedMoves(fighter.stats, fighter.specs, fighter.archetype);
       try { registerSignatureAnims(myMoves.filter(m => m.signature)); } catch (e) {}
-      oppMoves = assignMoveset(opponent.stats);
+      oppMoves = assignMoveset(opponent.stats, opponent.specs, opponent.archetype);
     } else {
       events = simulate(fighter, opponent, seed);
     }
@@ -931,6 +1173,188 @@ async function handleDemo(fighter, turnMode, sessionState) {
   const oppName = opponent.name || 'the opponent';
   const rewards = postBattle(fighter, opponent, winner, turnMode ? 'turns' : 'auto');
   await showBattleRewards(winner, rewards, `Your rig destroyed ${oppName}!`, `...${oppName} won.`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GYM LADDER — Pick a gym, then climb its 5-fighter ladder
+// ═══════════════════════════════════════════════════════════════
+
+async function handleGym(fighter, sessionState) {
+  fighter = await ensureSessionFighter(sessionState, fighter);
+
+  if (!renderTurnBattle) {
+    await showInfoScreen('GYM LADDER', (scr, w, h) => {
+      scr.centerText(Math.floor(h / 2), 'Turn battle renderer unavailable.', colors.rose);
+    });
+    return;
+  }
+
+  const { getGymOverview, buildGymFighter, getGymMoves, recordClear, calculateGymRewards } = require('../src/gym');
+
+  // Step 1: Pick a gym
+  const { getDifficultyLabel } = require('../src/gym');
+  const gyms = getGymOverview();
+  const gymKey = await pickOption('GYM LADDER', gyms.map(g => {
+    const clearedCount = g.fighters.filter(f => f.clears > 0).length;
+    const progress = g.unlocked ? `${clearedCount}/${g.fighters.length}` : '';
+    return {
+      key: g.id,
+      label: g.unlocked ? `${g.icon}  ${g.name}` : `${g.icon}  ???  (LOCKED)`,
+      desc: g.unlocked
+        ? `${g.desc}${progress ? `  [${progress}]` : ''}${g.cleared ? '  CLEARED' : ''}`
+        : 'Clear the previous gym first',
+    };
+  }));
+  if (!gymKey) return;
+
+  const gym = gyms.find(g => g.id === gymKey);
+  if (!gym || !gym.unlocked) {
+    await showInfoScreen('LOCKED', (scr, w, h) => {
+      scr.centerText(Math.floor(h / 2), 'Clear the previous gym first.', colors.rose);
+      scr.centerText(h - 3, 'Press any key', colors.dimmer);
+    });
+    return;
+  }
+
+  // Step 2: Pick a fighter in the ladder
+  const fighterKey = await pickOption(gym.name, gym.fighters.map(f => {
+    if (!f.unlocked) {
+      return { key: f.id, label: '· ???  (LOCKED)', desc: 'Defeat the previous fighter first' };
+    }
+    const diff = getDifficultyLabel(f, f.clears);
+    const clearTag = f.clears > 0 ? ` [${f.clears}x]` : '';
+    return {
+      key: f.id,
+      label: `${f.isLeader ? '★' : '·'} ${f.name}${clearTag}`,
+      desc: `${f.title}  ─  ${diff.label}`,
+    };
+  }));
+  if (!fighterKey) return;
+
+  const target = gym.fighters.find(f => f.id === fighterKey);
+  if (!target || !target.unlocked) {
+    await showInfoScreen('LOCKED', (scr, w, h) => {
+      scr.centerText(Math.floor(h / 2), 'Defeat the previous fighter first.', colors.rose);
+      scr.centerText(h - 3, 'Press any key', colors.dimmer);
+    });
+    return;
+  }
+
+  // Taunt screen
+  const diff = getDifficultyLabel(target, target.clears);
+  await showInfoScreen('GYM BATTLE', (scr, w, h) => {
+    const cy = Math.floor(h / 2);
+    const gc = gym.iconColor || [255, 180, 60];
+    scr.centerText(cy - 5, `${gym.icon}  ${gym.name}  ${gym.icon}`, rgb(gc[0], gc[1], gc[2]), null, true);
+    scr.centerText(cy - 4, diff.label, rgb(diff.color[0], diff.color[1], diff.color[2]));
+    scr.centerText(cy - 2, target.name, rgb(255, 220, 100), null, true);
+    scr.centerText(cy - 1, target.title, colors.dim);
+    scr.centerText(cy + 1, `"${target.taunt}"`, rgb(200, 170, 240));
+    if (target.clears > 0) {
+      scr.centerText(cy + 3, `Reclear #${target.clears + 1} — stats scaled +${Math.round((Math.pow(1.08, target.clears) - 1) * 100)}%`, colors.gold);
+    }
+    scr.centerText(h - 3, 'Press any key to fight', colors.dimmer);
+  });
+
+  // Build opponent & battle
+  const opponent = buildGymFighter(target, target.clears);
+  await prepareBenchToBattle(fighter, opponent);
+
+  const seed = combinedSeed(fighter.id, opponent.id + target.clears);
+  const myMoves = getEquippedMoves(fighter.stats, fighter.specs, fighter.archetype);
+  try { registerSignatureAnims(myMoves.filter(m => m.signature)); } catch (e) {}
+  const oppMoves = getGymMoves(target, target.clears);
+
+  const winner = await renderTurnBattle(fighter, opponent, myMoves, oppMoves, { role: 'host', seed });
+
+  // Rewards
+  const won = winner === 'a';
+  const rewardInfo = calculateGymRewards(target, target.clears, won);
+
+  if (won) {
+    const totalClears = recordClear(fighterKey);
+
+    const { addCredits } = require('../src/credits');
+    const newBal = addCredits(rewardInfo.credits);
+
+    const itemRewards = rollRewards(createRNG(Date.now()), rewardInfo.itemTier, true);
+    let itemDrop = null;
+    if (itemRewards.length > 0) {
+      itemDrop = itemRewards[0];
+      addItem(itemDrop.id);
+    }
+
+    let partDrop = null;
+    if (rewardInfo.partEligible) {
+      const { rollPartDrop, addPart } = require('../src/parts');
+      partDrop = rollPartDrop(createRNG(Date.now() + 1), rewardInfo.itemTier);
+      if (partDrop) addPart(partDrop.id);
+    }
+
+    const scr = new Screen();
+    scr.enter();
+    const w = scr.width;
+    const h = scr.height;
+    const cy = Math.floor(h / 2);
+
+    scr.centerText(0, '─'.repeat(w), colors.dimmer);
+    scr.centerText(0, ' GYM VICTORY ', rgb(255, 180, 60), null, true);
+    scr.centerText(cy - 5, `★ ★ ★  ${target.name} DEFEATED  ★ ★ ★`, colors.gold, null, true);
+    if (target.isLeader) {
+      scr.centerText(cy - 4, `${gym.name} CLEARED!`, rgb(100, 230, 150), null, true);
+    }
+    scr.centerText(cy - 3, `Clear #${totalClears}`, colors.dim);
+    scr.render();
+    await sleep(700);
+
+    scr.centerText(cy - 1, `◆ +${rewardInfo.credits} credits`, colors.gold, null, true);
+    scr.centerText(cy, `Balance: ${newBal}`, colors.dim);
+    scr.render();
+    await sleep(400);
+
+    let rewardLine = cy + 2;
+    if (itemDrop) {
+      const rc = RARITY_COLORS[itemDrop.rarity] || colors.dim;
+      scr.centerText(rewardLine, `▸ ${itemDrop.icon}  ${itemDrop.name}  (${itemDrop.rarity})`, rc, null, true);
+      rewardLine++;
+    }
+    if (partDrop) {
+      const rc = RARITY_COLORS[partDrop.rarity] || colors.dim;
+      scr.centerText(rewardLine, `▸ PART: ${partDrop.label || partDrop.id}  (${partDrop.rarity})`, rc, null, true);
+      rewardLine++;
+    }
+
+    scr.render();
+    await sleep(400);
+
+    // Kerneldex scan
+    const { scanRig: gymScan, recordResult: gymRecord, getDexCount: gymDexCount } = require('../src/rigdex');
+    const gymScanResult = gymScan(opponent);
+    gymRecord(opponent, true);
+    if (gymScanResult.isNew) {
+      rewardLine++;
+      scr.centerText(rewardLine, '◈ NEW RIG SCANNED ◈', rgb(130, 220, 235), null, true);
+      scr.centerText(rewardLine + 1, `${target.name} added to Kerneldex  (${gymDexCount()} total)`, colors.dim);
+      scr.render();
+      await sleep(600);
+    }
+
+    scr.hline(2, h - 4, w - 4, '─', colors.ghost);
+    scr.centerText(h - 3, 'Press any key to continue', colors.dimmer);
+    scr.render();
+    await waitForKey();
+    scr.exit();
+  } else {
+    // Scan even on loss
+    const { scanRig: gymScanL, recordResult: gymRecordL } = require('../src/rigdex');
+    const gymLossResult = gymScanL(opponent);
+    gymRecordL(opponent, false);
+    await showBattleRewards(winner,
+      { earned: 15, newBal: require('../src/credits').addCredits(15), itemDrop: null, newRigScanned: gymLossResult.isNew, rigName: target.name },
+      '', `${target.name} was too strong. Train harder.`);
+  }
+
+  saveMatch(fighter, opponent, winner, 'gym');
 }
 
 async function handleDash(fighter, sessionState) {
@@ -979,6 +1403,95 @@ async function handleDash(fighter, sessionState) {
     const key = await waitForKeyReturn();
     scr.exit();
 
+    playAgain = (key === 'r' || key === 'R');
+  }
+}
+
+async function handleHackGrid(fighter, sessionState) {
+  fighter = await ensureSessionFighter(sessionState, fighter);
+
+  let renderHackGrid;
+  try { renderHackGrid = require('../src/hackgrid').renderHackGrid; } catch (e) {}
+
+  if (!renderHackGrid) {
+    await showInfoScreen('HACK THE GRID', (scr, w, h) => {
+      scr.centerText(Math.floor(h / 2), 'Hack the Grid unavailable.', colors.rose);
+    });
+    return;
+  }
+
+  let playAgain = true;
+  while (playAgain) {
+    const result = await renderHackGrid(fighter);
+    const levelsCleared = Math.max(0, result.level - 1);
+
+    // Credits: 100 per level cleared + 50 bonus per level past 5
+    const { addCredits } = require('../src/credits');
+    let earned = levelsCleared * 100;
+    if (levelsCleared > 5) earned += (levelsCleared - 5) * 50;
+    earned = Math.max(earned, 10); // minimum 10
+    const newBal = addCredits(earned);
+
+    // Item drops: levels 3+ get bag items
+    let itemDrop = null;
+    if (levelsCleared >= 3) {
+      const itemRng = createRNG(Date.now());
+      const tier = levelsCleared >= 7 ? 'high' : levelsCleared >= 5 ? 'mid' : 'low';
+      const itemRewards = rollRewards(itemRng, tier, true);
+      if (itemRewards.length > 0) {
+        itemDrop = itemRewards[0];
+        addItem(itemDrop.id);
+      }
+    }
+
+    // Part drops: levels 5+ get parts, levels 10+ get better odds
+    let partDrop = null;
+    if (levelsCleared >= 5) {
+      const { rollPartDrop, addPart } = require('../src/parts');
+      const partTier = levelsCleared >= 10 ? 'flagship' : levelsCleared >= 7 ? 'high' : 'mid';
+      partDrop = rollPartDrop(createRNG(Date.now() + 1), partTier);
+      if (partDrop) addPart(partDrop.id);
+    }
+
+    const scr = new Screen();
+    scr.enter();
+    const w = scr.width;
+    const h = scr.height;
+    const cy = Math.floor(h / 2);
+
+    scr.centerText(0, '─'.repeat(w), colors.dimmer);
+    scr.centerText(0, ' RUN COMPLETE ', rgb(0, 255, 180), null, true);
+
+    scr.centerText(cy - 4, '⌬  H A C K   T H E   G R I D  ⌬', rgb(130, 220, 235), null, true);
+    scr.centerText(cy - 2, `Score: ${result.score}  |  Levels cleared: ${levelsCleared}`, colors.gold, null, true);
+    if (result.reason === 'dead') {
+      scr.centerText(cy - 1, 'Connection terminated.', colors.rose);
+    } else {
+      scr.centerText(cy - 1, 'Disconnected.', colors.dim);
+    }
+
+    // Credits
+    scr.centerText(cy + 1, `◆ +${earned} credits  (balance: ${newBal})`, colors.gold);
+
+    // Reward drops
+    let rewardLine = cy + 3;
+    if (itemDrop) {
+      const rc = RARITY_COLORS[itemDrop.rarity] || colors.dim;
+      scr.centerText(rewardLine, `▸ ${itemDrop.icon}  ${itemDrop.name}  (${itemDrop.rarity})`, rc, null, true);
+      rewardLine++;
+    }
+    if (partDrop) {
+      const rc = RARITY_COLORS[partDrop.rarity] || colors.dim;
+      scr.centerText(rewardLine, `▸ PART: ${partDrop.label || partDrop.id}  (${partDrop.rarity})`, rc, null, true);
+      rewardLine++;
+    }
+
+    scr.hline(2, h - 4, w - 4, '─', colors.ghost);
+    scr.centerText(h - 3, '[R] Retry    [Q] Return to Menu', colors.white);
+    scr.render();
+
+    const key = await waitForKeyReturn();
+    scr.exit();
     playAgain = (key === 'r' || key === 'R');
   }
 }
@@ -1038,22 +1551,318 @@ async function handleRogue(fighter, sessionState) {
   scr.exit();
 }
 
+// Sell prices by rarity
+const SELL_PRICES = {
+  common: 5,
+  uncommon: 15,
+  rare: 40,
+  epic: 100,
+  legendary: 300,
+  mythic: 800,
+  transcendent: 2000,
+};
+
 async function handleBag() {
-  const items = getOwnedItems();
-  await showInfoScreen('BAG', (scr, w, h) => {
-    if (items.length === 0) {
-      scr.text(4, 3, 'Empty — win battles to earn items.', colors.dim);
-    } else {
-      scr.text(4, 2, `${items.reduce((s, i) => s + i.count, 0)} items total`, colors.dim);
-      for (let i = 0; i < items.length && i < h - 6; i++) {
+  const { removeItems } = require('../src/items');
+  const { addCredits, getBalance } = require('../src/credits');
+
+  return new Promise((resolve) => {
+    const scr = new Screen();
+    scr.enter();
+    const w = scr.width;
+    const h = scr.height;
+    let cursor = 0;
+    let sellMode = false;
+    let sellQty = 1;
+    const listY = 4;
+    const maxRows = h - 8;
+
+    const stdin = process.stdin;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+
+    function getItems() { return getOwnedItems(); }
+
+    function render() {
+      const items = getItems();
+      scr.clear();
+      scr.centerText(0, '─'.repeat(w), colors.dimmer);
+      scr.centerText(0, ' B A G ', colors.mint, null, true);
+
+      if (items.length === 0) {
+        scr.text(4, 3, 'Empty — win battles to earn items.', colors.dim);
+        scr.centerText(h - 3, 'Esc to go back', colors.dimmer);
+        scr.render();
+        return;
+      }
+
+      const totalCount = items.reduce((s, i) => s + i.count, 0);
+      scr.text(4, 2, `${totalCount} items`, colors.dim);
+      scr.text(w - 22, 2, `Balance: ${getBalance()}`, colors.gold);
+      scr.hline(4, 3, w - 8, '─', colors.ghost);
+
+      // Clamp cursor
+      if (cursor >= items.length) cursor = Math.max(0, items.length - 1);
+
+      const scrollStart = Math.max(0, cursor - maxRows + 3);
+      const scrollEnd = Math.min(items.length, scrollStart + maxRows);
+
+      for (let i = scrollStart; i < scrollEnd; i++) {
         const item = items[i];
+        const y = listY + (i - scrollStart);
+        const sel = i === cursor;
         const rc = RARITY_COLORS[item.rarity] || colors.dim;
-        const y = 4 + i;
-        scr.text(4, y, item.icon, rc);
-        scr.text(6, y, `${item.name} x${item.count}`.padEnd(24), colors.white);
-        scr.text(31, y, item.desc, colors.dim);
+        const price = SELL_PRICES[item.rarity] || 5;
+
+        if (sel) {
+          scr.text(2, y, '▸', colors.white, null, true);
+          scr.text(4, y, item.icon, rc, null, true);
+          scr.text(6, y, `${item.name} x${item.count}`.padEnd(26), colors.white, null, true);
+          scr.text(33, y, item.desc.slice(0, 24), rc);
+          scr.text(58, y, `${price}cr ea`, colors.gold);
+        } else {
+          scr.text(4, y, item.icon, colors.dimmer);
+          scr.text(6, y, `${item.name} x${item.count}`.padEnd(26), colors.dim);
+          scr.text(33, y, item.desc.slice(0, 24), colors.dimmer);
+        }
+      }
+
+      // Sell panel for selected item
+      if (sellMode && items.length > 0) {
+        const item = items[cursor];
+        const price = SELL_PRICES[item.rarity] || 5;
+        const totalPrice = price * sellQty;
+        const panelY = h - 4;
+
+        scr.hline(4, panelY - 1, w - 8, '─', colors.ghost);
+        scr.text(4, panelY, `Sell ${item.name}`, colors.white, null, true);
+        scr.text(4, panelY + 1, `Qty: ◂ ${sellQty} ▸   (max ${item.count})`, colors.mint, null, true);
+        scr.text(4, panelY + 2, `Total: ${totalPrice} credits`, colors.gold, null, true);
+        scr.text(w - 30, panelY + 1, 'Left/Right qty  Enter sell', colors.dimmer);
+        scr.text(w - 30, panelY + 2, 'Esc cancel', colors.dimmer);
+      } else {
+        scr.hline(4, h - 3, w - 8, '─', colors.ghost);
+        scr.text(4, h - 2, '↑↓ Browse   Enter Sell   Esc Back', colors.dimmer);
+      }
+
+      scr.render();
+    }
+
+    function onKey(key) {
+      const items = getItems();
+
+      if (key === '\x03') {
+        cleanup(); scr.exit(); process.exit(0);
+      }
+
+      if (sellMode) {
+        const item = items[cursor];
+        if (!item) { sellMode = false; render(); return; }
+        const price = SELL_PRICES[item.rarity] || 5;
+
+        if (key === '\x1b[C' || key === 'd' || key === 'l') {
+          // Increase qty
+          if (sellQty < item.count) sellQty++;
+          render();
+        } else if (key === '\x1b[D' || key === 'a' || key === 'h') {
+          // Decrease qty
+          if (sellQty > 1) sellQty--;
+          render();
+        } else if (key === '\r' || key === '\n' || key === ' ') {
+          // Confirm sell with animation
+          const total = price * sellQty;
+          const soldName = item.name;
+          const soldQty = sellQty;
+          if (removeItems(item.id, sellQty)) {
+            addCredits(total);
+          }
+          sellMode = false;
+          sellQty = 1;
+
+          // Flash popup animation
+          const popupFrames = async () => {
+            const cy = Math.floor(h / 2);
+            const boxW = 28;
+            const boxX = Math.floor((w - boxW) / 2);
+
+            for (let f = 0; f < 6; f++) {
+              render();
+              // Draw popup on top
+              const bright = f < 3;
+              const borderC = bright ? colors.gold : rgb(180, 160, 60);
+              scr.hline(boxX, cy - 1, boxW, '─', borderC);
+              scr.hline(boxX, cy + 2, boxW, '─', borderC);
+              for (let row = cy; row < cy + 2; row++) {
+                scr.set(boxX, row, '│', borderC);
+                scr.set(boxX + boxW - 1, row, '│', borderC);
+                for (let col = boxX + 1; col < boxX + boxW - 1; col++) scr.set(col, row, ' ');
+              }
+              scr.set(boxX, cy - 1, '╭', borderC);
+              scr.set(boxX + boxW - 1, cy - 1, '╮', borderC);
+              scr.set(boxX, cy + 2, '╰', borderC);
+              scr.set(boxX + boxW - 1, cy + 2, '╯', borderC);
+              const msg = `◆ +${total} credits`;
+              scr.text(Math.floor((w - msg.length) / 2), cy, msg, colors.gold, null, true);
+              const sub = `Sold ${soldQty}x ${soldName}`;
+              scr.text(Math.floor((w - sub.length) / 2), cy + 1, sub, colors.dim);
+              scr.render();
+              await sleep(120);
+            }
+            await sleep(400);
+            render();
+          };
+          popupFrames();
+          return;
+        } else if (key === '\x1b' || key === 'q') {
+          sellMode = false;
+          sellQty = 1;
+          render();
+        }
+        return;
+      }
+
+      // Normal browse mode
+      if (key === '\x1b[A' || key === 'k' || key === 'w') {
+        if (items.length > 0) cursor = (cursor - 1 + items.length) % items.length;
+        render();
+      } else if (key === '\x1b[B' || key === 'j' || key === 's') {
+        if (items.length > 0) cursor = (cursor + 1) % items.length;
+        render();
+      } else if ((key === '\r' || key === '\n' || key === ' ') && items.length > 0) {
+        // Enter sell mode
+        sellMode = true;
+        sellQty = 1;
+        render();
+      } else if (key === '\x1b' || key === 'q') {
+        cleanup(); scr.exit(); resolve();
       }
     }
+
+    function cleanup() {
+      stdin.removeListener('data', onKey);
+      stdin.setRawMode(false);
+      stdin.pause();
+    }
+
+    stdin.on('data', onKey);
+    render();
+  });
+}
+
+async function handleKerneldex() {
+  const { getDexEntries } = require('../src/rigdex');
+  const entries = getDexEntries();
+
+  return new Promise((resolve) => {
+    const scr = new Screen();
+    scr.enter();
+    const w = scr.width;
+    const h = scr.height;
+    let cursor = 0;
+    const listY = 4;
+    const maxRows = h - 7;
+
+    const stdin = process.stdin;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+
+    function render() {
+      scr.clear();
+      scr.centerText(0, '─'.repeat(w), colors.dimmer);
+      scr.centerText(0, ' K E R N E L D E X ', rgb(130, 220, 235), null, true);
+
+      if (entries.length === 0) {
+        scr.text(4, 3, 'No rigs scanned yet. Battle someone to start collecting!', colors.dim);
+        scr.centerText(h - 3, 'Esc to go back', colors.dimmer);
+        scr.render();
+        return;
+      }
+
+      scr.text(4, 2, `◈ ${entries.length} rig${entries.length === 1 ? '' : 's'} scanned`, rgb(130, 220, 235), null, true);
+      scr.text(w - 20, 2, 'Esc to go back', colors.dimmer);
+      scr.hline(4, 3, w - 8, '─', colors.ghost);
+
+      // Scrollable list
+      const scrollStart = Math.max(0, cursor - maxRows + 3);
+      const scrollEnd = Math.min(entries.length, scrollStart + maxRows);
+
+      for (let i = scrollStart; i < scrollEnd; i++) {
+        const e = entries[i];
+        const y = listY + (i - scrollStart);
+        const selected = i === cursor;
+        const record = `${e.wins}W-${e.losses}L`;
+        const arch = e.archetype || '?';
+        const recordColor = e.wins > e.losses ? rgb(100, 230, 150) : e.wins < e.losses ? colors.rose : colors.dim;
+
+        if (selected) {
+          scr.text(2, y, '▸', colors.white, null, true);
+          scr.text(4, y, e.name.slice(0, 18).padEnd(18), colors.white, null, true);
+          scr.text(23, y, e.gpu.slice(0, 18).padEnd(18), colors.cyan);
+          scr.text(42, y, arch.slice(0, 12).padEnd(12), colors.lavender, null, true);
+          scr.text(55, y, record.padEnd(10), recordColor, null, true);
+          const specStr = `${e.specs.cpu.slice(0, 12)} | ${e.specs.ram} | ${e.specs.storage}`;
+          scr.text(66, y, specStr.slice(0, w - 70), colors.dim);
+        } else {
+          scr.text(4, y, e.name.slice(0, 18).padEnd(18), colors.dim);
+          scr.text(23, y, e.gpu.slice(0, 18).padEnd(18), colors.dimmer);
+          scr.text(42, y, arch.slice(0, 12).padEnd(12), colors.dimmer);
+          scr.text(55, y, record.padEnd(10), colors.dimmer);
+        }
+      }
+
+      // Scroll indicator
+      if (entries.length > maxRows) {
+        const pct = Math.round((cursor / (entries.length - 1)) * 100);
+        scr.text(w - 8, listY, `${pct}%`, colors.dimmer);
+        // Scrollbar
+        const barH = maxRows;
+        const thumbPos = Math.round((cursor / (entries.length - 1)) * (barH - 1));
+        for (let i = 0; i < barH; i++) {
+          scr.text(w - 2, listY + i, i === thumbPos ? '█' : '│', i === thumbPos ? colors.cyan : colors.ghost);
+        }
+      }
+
+      // Detail panel for selected entry
+      const sel = entries[cursor];
+      if (sel) {
+        const dy = h - 2;
+        scr.hline(4, dy - 1, w - 8, '─', colors.ghost);
+        scr.text(4, dy, `${sel.specs.cpu}`, colors.dim);
+        scr.text(4 + sel.specs.cpu.length + 2, dy, `| ${sel.specs.gpu}`, colors.dim);
+        scr.text(w - 22, dy, `Seen ${sel.encounters}x`, colors.dimmer);
+      }
+
+      scr.render();
+    }
+
+    function onKey(key) {
+      if (key === '\x1b[A' || key === 'k' || key === 'w') {
+        if (entries.length > 0) cursor = (cursor - 1 + entries.length) % entries.length;
+        render();
+      } else if (key === '\x1b[B' || key === 'j' || key === 's') {
+        if (entries.length > 0) cursor = (cursor + 1) % entries.length;
+        render();
+      } else if (key === '\x1b' || key === 'q' || key === '\r' || key === '\n') {
+        cleanup();
+        scr.exit();
+        resolve();
+      } else if (key === '\x03') {
+        cleanup();
+        scr.exit();
+        process.exit(0);
+      }
+    }
+
+    function cleanup() {
+      stdin.removeListener('data', onKey);
+      stdin.setRawMode(false);
+      stdin.pause();
+    }
+
+    stdin.on('data', onKey);
+    render();
   });
 }
 
@@ -1103,8 +1912,8 @@ async function handleHistory() {
 async function handleLoadout(fighter, sessionState) {
   fighter = await ensureSessionFighter(sessionState, fighter);
   const { getAvailableMoves, getEquippedMoves: getEq } = require('../src/moveset');
-  const available = getAvailableMoves(fighter.stats);
-  const equipped = getEq(fighter.stats);
+  const available = getAvailableMoves(fighter.stats, fighter.specs, fighter.archetype);
+  const equipped = getEq(fighter.stats, fighter.specs, fighter.archetype);
   let sigMoves = [];
   try { sigMoves = generateSignatureMoves(fighter.stats, fighter.specs, fighter.archetype); } catch (e) {}
 
@@ -1555,7 +2364,7 @@ async function handleHost(fighter, sessionState) {
     if (turnMode && renderTurnBattle) {
       const myMoves = getEquippedMoves(myFighter.stats, myFighter.specs, myFighter.archetype);
       try { registerSignatureAnims(myMoves.filter(m => m.signature)); } catch {}
-      const oppMoves = assignMoveset(opponent.stats);
+      const oppMoves = assignMoveset(opponent.stats, opponent.specs, opponent.archetype);
       winner = await renderTurnBattle(myFighter, opponent, myMoves, oppMoves, {
         role: 'host', roomCode, relayUrl: require('../src/relay').DEFAULT_RELAY_URL, seed,
       });
@@ -1626,7 +2435,7 @@ async function handleJoin(fighter, sessionState) {
     if (turnMode) {
       const myMoves = getEquippedMoves(myFighter.stats, myFighter.specs, myFighter.archetype);
       try { registerSignatureAnims(myMoves.filter(m => m.signature)); } catch {}
-      const oppMoves = assignMoveset(opponent.stats);
+      const oppMoves = assignMoveset(opponent.stats, opponent.specs, opponent.archetype);
       winner = await renderTurnBattle(myFighter, opponent, myMoves, oppMoves, {
         role: 'joiner', roomCode, relayUrl: DEFAULT_RELAY_URL, seed,
       });
@@ -1730,8 +2539,14 @@ async function run() {
       case 'dash':
         await handleDash(fighter, sessionState);
         break;
+      case 'hackgrid':
+        await handleHackGrid(fighter, sessionState);
+        break;
       case 'rogue':
         await handleRogue(fighter, sessionState);
+        break;
+      case 'gym':
+        await handleGym(fighter, sessionState);
         break;
       case 'profile':
         await handleProfile(fighter, sessionState);
@@ -1753,6 +2568,12 @@ async function run() {
         break;
       case 'market':
         await handleMarket();
+        break;
+      case 'kerneldex':
+        await handleKerneldex();
+        break;
+      case 'guide':
+        await handleGuide();
         break;
       case 'history':
         await handleHistory();

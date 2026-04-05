@@ -11,6 +11,35 @@
 
 const { getBenchmarkCombatModifiers } = require('./benchmark');
 
+// ─── Archetype category effectiveness ───
+// Certain move categories deal more/less damage against certain archetypes.
+// This creates "read your opponent" strategy during move selection.
+// weak = takes 1.25x damage from that category, resist = takes 0.8x
+const ARCHETYPE_EFFECTIVENESS = {
+  ROOT_GOD:      { weak: 'speed',    resist: 'physical' },  // Big rigs are slow to react
+  FORK_BOMB:     { weak: 'magic',    resist: 'physical' },  // GPU compute overwhelms threads
+  SHADER_WITCH:  { weak: 'speed',    resist: 'magic' },     // GPU pipeline interrupted by fast I/O
+  ZERO_DAY:      { weak: 'physical', resist: 'speed' },     // Speed builds are glass cannons
+  MALLOC_WALL:   { weak: 'magic',    resist: 'physical' },  // Memory walls crumble to compute
+  STACK_SMASHER: { weak: 'magic',    resist: 'speed' },     // Berserkers can't handle sustained magic
+  GHOST_PROC:    { weak: 'physical', resist: 'speed' },     // If caught, evasion tanks crumble
+  // Neutral — no weakness or resistance
+  KERNEL_GOD:    { weak: null, resist: null },
+  SSH_DRIFTER:   { weak: null, resist: null },
+  SEG_FAULT:     { weak: null, resist: null },
+  DAEMON:        { weak: null, resist: null },
+};
+
+// Returns the category effectiveness multiplier for a move category vs defender archetype
+function getCategoryMultiplier(moveCat, defenderArchetype) {
+  if (moveCat === 'special') return 1.0; // special moves are always neutral
+  const eff = ARCHETYPE_EFFECTIVENESS[defenderArchetype];
+  if (!eff) return 1.0;
+  if (eff.weak === moveCat) return 1.25;
+  if (eff.resist === moveCat) return 0.8;
+  return 1.0;
+}
+
 const PASSIVES = {
   // APEX — Omniscience: consistent godlike output with passive regen
   // No weakness, no variance — pure overwhelming superiority
@@ -237,9 +266,13 @@ function getCombatModifiers(ctx) {
   const underdogMods = calcUnderdogBonus(atk, def) || {};
   const benchmarkMods = getBenchmarkCombatModifiers(atk.benchmark, turn, move) || {};
 
+  // Category effectiveness: move category vs defender archetype
+  const categoryMult = getCategoryMultiplier(move?.cat || 'special', defArchetype);
+
   // Combine multiplicatively for damage/def, additively for crit/dodge
   return {
     damageMult: (passiveMods.damageMult || 1) * (underdogMods.damageMult || 1) * (benchmarkMods.damageMult || 1),
+    categoryMult,
     flatDamage: (passiveMods.flatDamage || 0) + (underdogMods.flatDamage || 0),
     defMult: (passiveMods.defMult || 1) * (underdogMods.defMult || 1),
     critBonus: (passiveMods.critBonus || 0) + (underdogMods.critBonus || 0) + (benchmarkMods.critBonus || 0),
@@ -265,4 +298,7 @@ function getPassiveInfo(archetypeName) {
   return { name: p.name, desc: p.desc };
 }
 
-module.exports = { getCombatModifiers, effectiveStat, calcUnderdogBonus, getPassiveInfo, PASSIVES };
+module.exports = {
+  getCombatModifiers, effectiveStat, calcUnderdogBonus, getPassiveInfo, PASSIVES,
+  ARCHETYPE_EFFECTIVENESS, getCategoryMultiplier,
+};

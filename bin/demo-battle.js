@@ -303,8 +303,8 @@ async function main() {
   await countdown();
   startMusic();
 
-  const movesA = assignMoveset(fighterA.stats);
-  const movesB = assignMoveset(fighterB.stats);
+  const movesA = assignMoveset(fighterA.stats, fighterA.specs, fighterA.archetype);
+  const movesB = assignMoveset(fighterB.stats, fighterB.specs, fighterB.archetype);
 
   const seed = 7777;
 

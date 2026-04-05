@@ -734,7 +734,7 @@ async function renderRogue(fighter, options = {}) {
         if (useTurnBattles) {
           const myMoves = getEquippedMoves(fighter.stats, fighter.specs, fighter.archetype);
           try { registerSignatureAnims(myMoves.filter(m => m.signature)); } catch {}
-          const oppMoves = assignMoveset(enemy.fighter.stats);
+          const oppMoves = assignMoveset(enemy.fighter.stats, enemy.fighter.specs, enemy.fighter.archetype);
           winner = await renderTurnBattle(fighter, enemy.fighter, myMoves, oppMoves, { role: 'host', seed });
         } else {
           const events = simulate(fighter, enemy.fighter, seed);

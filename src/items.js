@@ -224,6 +224,16 @@ function addItem(itemId, count = 1) {
   saveInventory(inv);
 }
 
+// Remove N items from inventory (for selling)
+function removeItems(itemId, count = 1) {
+  const inv = loadInventory();
+  if (!inv[itemId] || inv[itemId] < count) return false;
+  inv[itemId] -= count;
+  if (inv[itemId] <= 0) delete inv[itemId];
+  saveInventory(inv);
+  return true;
+}
+
 // Remove one item from inventory (on use)
 function useItem(itemId) {
   const inv = loadInventory();
@@ -340,7 +350,7 @@ function printRewards(rewards) {
 
 module.exports = {
   ITEMS, RARITY_COLORS,
-  loadInventory, saveInventory, addItem, useItem,
+  loadInventory, saveInventory, addItem, useItem, removeItems,
   getOwnedItems, rollRewards,
   printInventory, printRewards,
 };
